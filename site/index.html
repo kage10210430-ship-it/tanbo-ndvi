@@ -829,7 +829,7 @@ function syncClean(){ const k=`${thr()}|${dipOn()}|${[...excluded].sort().join()
 function cleanOf(pid){ let c=clean.get(pid); if(c) return c;
   const t=thr()-1e-9, s=(pkg.series[pid]||[]).filter(r=>r[2]>=t&&!excluded.has(r[0])), dip=dipOn();
   const rows=s.filter((r,i)=>!(dip&&isDip(s,i))); c={rows,by:new Map(rows.map(r=>[r[0],r[1]]))}; clean.set(pid,c); return c; }
-function seriesOf(pid){ return cleanOf(pid).rows.map(r=>({date:r[0],t:Date.parse(r[0]+'T00:00:00Z'),ndvi:r[1]})); }
+function seriesOf(pid){ return cleanOf(pid).rows.map(r=>({date:r[0],t:Date.parse(r[0]+'T00:00:00Z'),ndvi:r[1],ls:r[3]==='L'})); }
 function val(pid,d){ const v=cleanOf(pid).by.get(d); return v===undefined?null:v; }
 function detectOutliers(){
   autoFlag={}; excluded=new Set(); const t=thr(); const byDate={};
@@ -913,10 +913,11 @@ function drawChart(){
   g+=`<line x1="${ML}" x2="${W-MR}" y1="${Y(0)}" y2="${Y(0)}" stroke="#4c5a52"/>`;
   hoverPts=[];
   for(const s of series){ if(!s.pts.length) continue; g+=`<path d="${s.pts.map((p,i)=>`${i?'L':'M'}${X(p.x).toFixed(1)},${Y(p.ndvi).toFixed(1)}`).join('')}" fill="none" stroke="${s.color}" stroke-width="2" stroke-dasharray="${s.dash}" stroke-linejoin="round"/>`;
-    for(const p of s.pts){ g+=`<circle cx="${X(p.x).toFixed(1)}" cy="${Y(p.ndvi).toFixed(1)}" r="2.8" fill="${s.color}"/>`; hoverPts.push({px:X(p.x),x:p.x,s,p}); } }
+    for(const p of s.pts){ g+=p.ls?`<circle cx="${X(p.x).toFixed(1)}" cy="${Y(p.ndvi).toFixed(1)}" r="3" fill="#fff" stroke="${s.color}" stroke-width="1.6"/>`:`<circle cx="${X(p.x).toFixed(1)}" cy="${Y(p.ndvi).toFixed(1)}" r="2.8" fill="${s.color}"/>`; hoverPts.push({px:X(p.x),x:p.x,s,p}); } }
   g+=`<line id="hl" x1="0" x2="0" y1="${MT}" y2="${H-MB}" stroke="#1e3a2f" stroke-dasharray="3 3" visibility="hidden"/>`;
   // legend inside svg (so PNG includes it)
   let lx=ML, ly=H-MB+34; for(const s of series){ const w=s.label.length*13.5+36; if(lx+w>W-MR){lx=ML;ly+=20;} g+=`<line x1="${lx}" x2="${lx+18}" y1="${ly-5}" y2="${ly-5}" stroke="${s.color}" stroke-width="2.5" stroke-dasharray="${s.dash}"/><text x="${lx+22}" y="${ly}" font-size="14" fill="#1e3a2f">${s.label}</text>`; lx+=w; }
+  if(series.some(s=>s.pts.some(p=>p.ls))){ ly+=20; g+=`<circle cx="${ML+9}" cy="${ly-5}" r="3.5" fill="#fff" stroke="#4c5a52" stroke-width="1.6"/><text x="${ML+22}" y="${ly}" font-size="13" fill="#4c5a52">白抜きの点は Landsat（30m画素）</text>`; }
   svg.setAttribute('viewBox',`0 0 ${W} ${ly+8}`); svg.innerHTML=g;
   document.getElementById('note').textContent=`除外 ${excluded.size}日 / 有効画素率 ${Math.round(thr()*100)}%以上`;
 }
@@ -925,7 +926,7 @@ function drawChart(){
     const r=svg.getBoundingClientRect(); const mx=(pt.clientX-r.left)*W/r.width; let best=null; for(const h of hoverPts){const d=Math.abs(h.px-mx); if(!best||d<best.d) best={d,h};}
     if(!best||best.d>25){tip.style.display='none';svg.querySelector('#hl')?.setAttribute('visibility','hidden');return;}
     const rows=hoverPts.filter(h=>Math.abs(h.x-best.h.x)<1e-6).sort((a,b)=>b.p.ndvi-a.p.ndvi); const mode=document.getElementById('mode').value;
-    tip.innerHTML=`<b>${mode==='dat'?'移植後'+Math.round(best.h.x)+'日（'+best.h.p.date+'）':best.h.p.date}</b>`+rows.map(h=>`<div class="r"><span><i style="background:${h.s.color}"></i>${h.s.label}</span><span>${h.p.ndvi.toFixed(2)}</span></div>`).join('');
+    tip.innerHTML=`<b>${mode==='dat'?'移植後'+Math.round(best.h.x)+'日（'+best.h.p.date+'）':best.h.p.date}</b>`+rows.map(h=>`<div class="r"><span><i style="background:${h.s.color}"></i>${h.s.label}${h.p.ls?'（Landsat）':''}</span><span>${h.p.ndvi.toFixed(2)}</span></div>`).join('');
     tip.style.display='block'; const hl=svg.querySelector('#hl'); hl.setAttribute('x1',best.h.px); hl.setAttribute('x2',best.h.px); hl.setAttribute('visibility','visible');
     const px=best.h.px*r.width/W; tip.style.left=(px+14+tip.offsetWidth>r.width?px-tip.offsetWidth-14:px+14)+'px'; tip.style.top=Math.max(0,(pt.clientY-r.top)-20)+'px'; };
   svg.addEventListener('mousemove',onMove); svg.addEventListener('touchstart',onMove,{passive:false}); svg.addEventListener('touchmove',onMove,{passive:false});
@@ -993,7 +994,10 @@ async function loadVisible(){
     try{
       const [g,n]=await Promise.all([fetch(`${DATA}cells/${c.id}/parcels.geojson`).then(r=>r.json()), fetch(`${DATA}cells/${c.id}/ndvi.json`).then(r=>r.ok?r.json():{dates:[],p:{}})]);
       const full={}; for(const f of g.features){ f.properties.pid=String(f.properties.pid); full[f.properties.pid]=f.properties.full||1; }
-      if(n.v===2){ for(const pid in n.p){ const a=n.p[pid], rows=[]; for(let k=0;k<a.length;k+=3) rows.push([n.dates[a[k]],a[k+1]/1000,a[k+2]/100]); pkg.series[pid]=rows.sort((x,y)=>x[0]<y[0]?-1:1); } }   // [添字, NDVI×1000, 有効画素率%] の並び
+      if(n.v===2){ // [添字, NDVI×1000, 有効画素率%] の並び。Landsat（ldates/lp）は同じ日に Sentinel-2 がなければ使う
+        const by={}, put=(dates,p,src)=>{ for(const pid in p||{}){ const a=p[pid], m=by[pid]||(by[pid]=new Map()); for(let k=0;k<a.length;k+=3){ const d=dates[a[k]]; if(!m.has(d)) m.set(d,[d,a[k+1]/1000,a[k+2]/100,src]); } } };
+        put(n.dates,n.p,'S'); put(n.ldates,n.lp,'L');
+        for(const pid in by) pkg.series[pid]=[...by[pid].values()].sort((x,y)=>x[0]<y[0]?-1:1); }
       else for(const pid in n.p){ pkg.series[pid]=n.dates.map((d,i)=>{ const v=n.p[pid][i]; return v?[d,v[0],Math.min(1,v[1]/(full[pid]||v[1]||1))]:null; }).filter(Boolean); }
       pkg.parcels.features.push(...g.features); geoLayer.addData(g); dataVer++;
     }catch(e){ loadedCells.delete(c.id); console.error(c.id,e); }

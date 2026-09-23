@@ -3,7 +3,12 @@
 import os, json
 import geopandas as gpd
 from shapely.geometry import mapping
-from common import load_config, cell_id, read_parcels, write_json, read_json
+from common import load_config, cell_id, read_parcels, write_json, read_json, round_coords
+
+def round_coords_geom(geom):
+    g = json.loads(json.dumps(geom))
+    g["coordinates"] = round_coords(g["coordinates"])
+    return g
 
 def main():
     cfg = load_config()
@@ -29,10 +34,10 @@ def main():
                 try: props["lt"] = int(float(r[lt]))
                 except (TypeError, ValueError): pass
             feats.append({"type": "Feature", "properties": props,
-                          "geometry": json.loads(json.dumps(mapping(r.geometry.simplify(0.000005, preserve_topology=True))))})
+                          "geometry": round_coords_geom(mapping(r.geometry.simplify(0.000005, preserve_topology=True)))})
             inner_feats.append({"type": "Feature", "properties": {"pid": r["pid"]},
                                 "geometry": json.loads(json.dumps(mapping(r["inner_wgs"].simplify(0.00001, preserve_topology=True))))})
-        write_json(os.path.join(data_dir, "cells", cid, "parcels.geojson"), {"type": "FeatureCollection", "features": feats})
+        write_json(os.path.join(data_dir, "cells", cid, "parcels.geojson"), {"type": "FeatureCollection", "precision": 5, "features": feats})
         write_json(os.path.join(data_dir, "cells", cid, "inner.geojson"), {"type": "FeatureCollection", "features": inner_feats})
         b = g.total_bounds
         cells.append({"id": cid, "bbox": [round(float(x), 6) for x in b], "n": int(len(g))})
