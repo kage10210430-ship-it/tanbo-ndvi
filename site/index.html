@@ -797,7 +797,7 @@ function centroid(geom){ const ring=(geom.type==='Polygon'?geom.coordinates[0]:g
 function distM(a,b){ const R=6371000,dl=(b[1]-a[1])*Math.PI/180,dn=(b[0]-a[0])*Math.PI/180*Math.cos((a[1]+b[1])/2*Math.PI/180); return R*Math.hypot(dl,dn); }
 
 function loadPackage(p, label){
-  pkg=p; parcels={}; selected=[]; excluded=new Set(); autoFlag={};
+  pkg=p; parcels={}; selected=[]; excluded=new Set(); autoFlag={}; dataVer++;
   if(geoLayer) map.removeLayer(geoLayer);
   const feats=(p.parcels&&p.parcels.features)||[];
   geoLayer=L.geoJSON(feats,{
@@ -823,18 +823,23 @@ function isDip(s,i){ // one parcel only: lower than both neighbours (each within
   if(tD-Date.parse(pv[0])>15*864e5||Date.parse(nx[0])-tD>15*864e5) return false;
   return pv[1]-s[i][1]>=0.2-1e-9&&nx[1]-s[i][1]>=0.2-1e-9;
 }
-function rowsOf(pid){ return (pkg.series[pid]||[]).filter(r=>r[2]>=thr()-1e-9&&!excluded.has(r[0])); }
-function seriesOf(pid){ const s=rowsOf(pid), dip=dipOn(); return s.filter((r,i)=>!(dip&&isDip(s,i))).map(r=>({date:r[0],t:Date.parse(r[0]+'T00:00:00Z'),ndvi:r[1]})); }
-function val(pid,d){ const s=rowsOf(pid), i=s.findIndex(r=>r[0]===d); return (i>=0&&!(dipOn()&&isDip(s,i)))?s[i][1]:null; }
+// filtered rows per parcel, cached; rebuilt when threshold / excluded days / dip filter / data change
+let clean=new Map(), cleanKey='', dataVer=0;
+function syncClean(){ const k=`${thr()}|${dipOn()}|${[...excluded].sort().join()}|${dataVer}`; if(k!==cleanKey){ clean=new Map(); cleanKey=k; } }
+function cleanOf(pid){ let c=clean.get(pid); if(c) return c;
+  const t=thr()-1e-9, s=(pkg.series[pid]||[]).filter(r=>r[2]>=t&&!excluded.has(r[0])), dip=dipOn();
+  const rows=s.filter((r,i)=>!(dip&&isDip(s,i))); c={rows,by:new Map(rows.map(r=>[r[0],r[1]]))}; clean.set(pid,c); return c; }
+function seriesOf(pid){ return cleanOf(pid).rows.map(r=>({date:r[0],t:Date.parse(r[0]+'T00:00:00Z'),ndvi:r[1]})); }
+function val(pid,d){ const v=cleanOf(pid).by.get(d); return v===undefined?null:v; }
 function detectOutliers(){
-  autoFlag={}; excluded=new Set(); const t=thr();
+  autoFlag={}; excluded=new Set(); const t=thr(); const byDate={};
+  for(const pid in pkg.series){
+    const s=pkg.series[pid].filter(r=>r[2]>=t-1e-9);
+    for(let i=1;i<s.length-1;i++){ const pv=s[i-1],nx=s[i+1],tD=Date.parse(s[i][0]); if(tD-Date.parse(pv[0])>25*864e5||Date.parse(nx[0])-tD>25*864e5) continue;
+      (byDate[s[i][0]]=byDate[s[i][0]]||[]).push((pv[1]+nx[1])/2-s[i][1]); }
+  }
   for(const d of allDates){
-    const drops=[]; const tD=Date.parse(d);
-    for(const pid in pkg.series){
-      const s=pkg.series[pid].filter(r=>r[2]>=t-1e-9); const i=s.findIndex(r=>r[0]===d); if(i<=0||i>=s.length-1) continue;
-      const pv=s[i-1],nx=s[i+1]; if(tD-Date.parse(pv[0])>25*864e5||Date.parse(nx[0])-tD>25*864e5) continue;
-      drops.push((pv[1]+nx[1])/2-s[i][1]);
-    }
+    const drops=byDate[d]||[];
     if(drops.length>=4){ const big=drops.filter(x=>x>0.15).length; if(big>=Math.max(4,Math.ceil(drops.length/3))){ autoFlag[d]=`${drops.length}区画中${big}区画が前後より0.15以上低く次で戻る（雲・かすみの疑い）`; excluded.add(d);} }
   }
 }
@@ -857,16 +862,18 @@ document.getElementById('btnClear').onclick=()=>{selected=[];refresh();};
 
 // ---------- map coloring ----------
 function buildColorDates(){
-  const sel=document.getElementById('colorDate'); sel.innerHTML='';
-  const n=Object.keys(parcels).length;
-  const cov=allDates.map(d=>({d,c:Object.keys(parcels).filter(p=>val(p,d)!=null).length})).filter(x=>x.c>0);
+  const sel=document.getElementById('colorDate'); sel.innerHTML=''; syncClean();
+  const n=Object.keys(parcels).length, cnt={};
+  for(const p in parcels) for(const r of cleanOf(p).rows) cnt[r[0]]=(cnt[r[0]]||0)+1;
+  const cov=allDates.map(d=>({d,c:cnt[d]||0})).filter(x=>x.c>0);
   for(const x of cov.slice().reverse()){ const o=document.createElement('option'); o.value=x.d; o.textContent=`${x.d}（雲なし${Math.round(x.c/n*100)}%）`; sel.appendChild(o); }
   const good=cov.filter(x=>x.c/n>=0.5); sel.value=good.length?good[good.length-1].d:(cov.length?cov[cov.length-1].d:'');
 }
 function paintMap(){
   const d=document.getElementById('colorDate').value, on=document.getElementById('colorOn').checked;
   for(const pid in parcels){ const s=selected.find(s=>s.pid===pid); const v=on?val(pid,d):null;
-    parcels[pid].layer.setStyle({color:s?s.color:'#fff',weight:s?4:1,opacity:s?1:.8,fillColor:on?ndviColor(v):'#888',fillOpacity:on?(v==null?.15:.65):.3}); if(s) parcels[pid].layer.bringToFront(); }
+    const l=parcels[pid].layer, st={color:s?s.color:'#fff',weight:s?4:1,opacity:s?1:.8,fillColor:on?ndviColor(v):'#888',fillOpacity:on?(v==null?.15:.65):.3}, k=Object.values(st).join('|');
+    if(l._stk!==k){ l.setStyle(st); l._stk=k; } if(s) l.bringToFront(); }
 }
 document.getElementById('colorDate').onchange=paintMap; document.getElementById('colorOn').onchange=paintMap;
 
@@ -949,7 +956,7 @@ document.getElementById('dipOn').onchange=refresh;
 document.getElementById('nbR').onchange=refresh; document.getElementById('nbOn').onchange=refresh;
 document.getElementById('mode').onchange=refresh; document.getElementById('tp').onchange=refresh;
 
-function refresh(){ renderChips(); paintMap(); drawChart(); renderSummary(); buildExcl(); if(index) writeHash(); }
+function refresh(){ syncClean(); renderChips(); paintMap(); drawChart(); renderSummary(); buildExcl(); if(index) writeHash(); }
 
 // ---------- export ----------
 document.getElementById('btnPng').onclick=()=>{ const svg=document.getElementById('chart'); const vb=svg.getAttribute('viewBox').split(' ').map(Number); const clone=svg.cloneNode(true);
@@ -987,7 +994,7 @@ async function loadVisible(){
       const [g,n]=await Promise.all([fetch(`${DATA}cells/${c.id}/parcels.geojson`).then(r=>r.json()), fetch(`${DATA}cells/${c.id}/ndvi.json`).then(r=>r.ok?r.json():{dates:[],p:{}})]);
       const full={}; for(const f of g.features){ f.properties.pid=String(f.properties.pid); full[f.properties.pid]=f.properties.full||1; }
       for(const pid in n.p){ pkg.series[pid]=n.dates.map((d,i)=>{ const v=n.p[pid][i]; return v?[d,v[0],Math.min(1,v[1]/(full[pid]||v[1]||1))]:null; }).filter(Boolean); }
-      pkg.parcels.features.push(...g.features); geoLayer.addData(g);
+      pkg.parcels.features.push(...g.features); geoLayer.addData(g); dataVer++;
     }catch(e){ loadedCells.delete(c.id); console.error(c.id,e); }
   }));
   loading--; hint.classList.add('hidden');
