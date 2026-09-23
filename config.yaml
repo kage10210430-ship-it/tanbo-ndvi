@@ -10,7 +10,7 @@ parcel_sources:
 
 # 対象範囲（西, 南, 東, 北）。まずは原種センター周辺だけ。
 # 県全体にするときは  bbox: null  に書き換える
-bbox: [136.26, 36.05, 136.30, 36.07]
+bbox: null
 
 # 田だけを対象にする
 only_paddy: true
