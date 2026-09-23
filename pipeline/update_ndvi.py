@@ -15,13 +15,25 @@ ndvi.json の形式（v2）:
 --backend fake --fake-csv <file> を付けると GEE を使わずに CSV（pid,date,mean,count）から
 同じ形式を作る（動作確認用）。
 """
-import argparse, os, sys, json, time, datetime as dt
+import argparse, os, sys, json, time, random, datetime as dt
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from common import load_config, write_json, read_json
 
 MAX_FEATURES_PER_CALL = 4500      # getInfo の要素数上限(5000)に余裕を持たせる
 MIN_PCT = 50                      # これ未満の有効画素率の観測は保存しない
 LOOKBACK_DAYS = 15                # 雲判定データの配信遅れに備えて、直近はもう一度確認する
+
+
+def with_retry(fn, tries=6):
+    """GEE の同時実行数制限（Too many concurrent aggregations など）は待って再試行する"""
+    for k in range(tries):
+        try:
+            return fn()
+        except Exception as e:
+            msg = str(e)
+            if k == tries - 1 or not any(x in msg for x in ("Too many concurrent", "Too Many Requests", "429", "rate limit")):
+                raise
+            time.sleep(15 * 2 ** k + random.uniform(0, 10))
 
 
 def mask_id(cfg):
@@ -64,7 +76,7 @@ class GEEBackend:
 
     def list_dates(self, bbox, start, end):
         """期間内の観測日（UTC日付, YYYY-MM-DD）を返す"""
-        ts = self._col(bbox, start, end).aggregate_array("system:time_start").getInfo()
+        ts = with_retry(lambda: self._col(bbox, start, end).aggregate_array("system:time_start").getInfo())
         return sorted({dt.datetime.fromtimestamp(t / 1000, dt.timezone.utc).strftime("%Y-%m-%d") for t in ts})
 
     def stats(self, bbox, inner_fc_geojson, dates):
@@ -78,7 +90,7 @@ class GEEBackend:
         def per_img(img):
             return img.reduceRegions(collection=fc, reducer=reducer, scale=10).map(lambda f: f.set("date", img.get("date")))
         table = daily.map(per_img).flatten().filter(ee.Filter.notNull(["mean"]))
-        res = table.select(["pid", "date", "mean", "count"], None, False).getInfo()
+        res = with_retry(lambda: table.select(["pid", "date", "mean", "count"], None, False).getInfo())
         out = {d: {} for d in dates}
         for f in res["features"]:
             p = f["properties"]
