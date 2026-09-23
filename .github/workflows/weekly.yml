@@ -1,0 +1,60 @@
+name: weekly-ndvi
+
+on:
+  schedule:
+    - cron: '0 21 * * 0'        # 毎週月曜 6:00 JST（UTC 日曜 21:00）
+  workflow_dispatch:
+    inputs:
+      rebuild_cells:
+        description: '区画グリッドを作り直す（筆ポリゴン更新時）'
+        type: boolean
+        default: false
+      max_minutes:
+        description: 'NDVI計算に使う時間の上限（分）'
+        default: '300'
+
+concurrency:
+  group: ndvi-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: published
+        continue-on-error: true
+      - name: 前回データを復元
+        run: |
+          if [ -d published/data ]; then mkdir -p site && rm -rf site/data && cp -r published/data site/data; fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - name: 区画グリッドを作成（初回 or 指定時）
+        if: ${{ inputs.rebuild_cells == true || hashFiles('site/data/index.json') == '' }}
+        run: python pipeline/build_cells.py
+
+      - name: NDVI を更新
+        env:
+          EE_SERVICE_ACCOUNT: ${{ secrets.EE_SERVICE_ACCOUNT }}
+          EE_PRIVATE_KEY: ${{ secrets.EE_PRIVATE_KEY }}
+          EE_PROJECT: ${{ secrets.EE_PROJECT }}
+        run: python pipeline/update_ndvi.py --max-minutes ${{ inputs.max_minutes || '300' }} --workers 4
+
+      - uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site
+          force_orphan: true
+          commit_message: 'update ndvi data'
