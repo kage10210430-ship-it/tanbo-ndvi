@@ -96,6 +96,15 @@ def read_parcels(cfg):
         out = out.rename(columns={lt: "lt_src"})
     return out
 
+def round_coords(coords, nd=5):
+    """GeoJSON の座標を小数 nd 桁（5桁 ≒ 1m）に丸め、丸めて重なった連続点は1つにする"""
+    if isinstance(coords[0], (int, float)):
+        return [round(coords[0], nd), round(coords[1], nd)]
+    out = [round_coords(c, nd) for c in coords]
+    if out and isinstance(out[0][0], (int, float)):
+        out = [out[0]] + [p for a, p in zip(out, out[1:]) if p != a]
+    return out
+
 def write_json(path, obj):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:

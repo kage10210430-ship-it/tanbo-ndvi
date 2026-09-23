@@ -16,7 +16,7 @@
        site/data/           ← GitHub Actions が週1回更新し、GitHub Pages で配信
         ├ index.json          （セル一覧・更新日）
         └ cells/<id>/
-           ├ parcels.geojson  （区画の形・有効画素の期待数）
+           ├ parcels.geojson  （区画の形（約1m単位に丸め）・有効画素の期待数）
            ├ inner.geojson    （計算用: 畦畔を避けて5m内側に縮めた形）
            └ ndvi.json        （観測日 × 区画の NDVI と有効画素率。50%未満の観測は保存しない）
                │
@@ -74,6 +74,8 @@ Actions → `weekly-ndvi` → **Run workflow**。初回は過去24か月分を�
 | `history_months` | 初回にさかのぼる月数（前年重ね表示には24） |
 | `max_scene_cloud` | シーン雲量がこれ以上の画像は使わない。空欄なら画像全体の雲量では捨てない（区画ごとに判定） |
 | `cloud_score_min` | 雲判定 Cloud Score+ の晴れ度（0〜1）。これ以上の画素だけ使う。変えると次回の更新で全期間を計算し直す |
+| `landsat` | Landsat 8/9（NASA HLS, 30m）も使う。Sentinel-2 がない日の観測を補う（グラフでは白抜きの点） |
+| `landsat_min_pixels` | Landsat の30m画素がこれ未満しか入らない小さい区画には Landsat を使わない |
 | `cell_deg_lon/lat` | 配信ファイルの分割単位 |
 
 ## ローカルでの動作確認（GEE 不要）
