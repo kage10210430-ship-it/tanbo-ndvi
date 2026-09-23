@@ -1,4 +1,4 @@
-import json, math, os, re, glob, zipfile, shutil
+import json, math, os, re, glob, zipfile, shutil, time, random
 import yaml, requests
 import pandas as pd
 import geopandas as gpd
@@ -115,3 +115,15 @@ def read_json(path, default=None):
         return default
     with open(path, encoding="utf-8") as f:
         return json.load(f)
+
+
+def with_retry(fn, tries=6):
+    """GEE の同時実行数制限（Too many concurrent aggregations など）は待って再試行する"""
+    for k in range(tries):
+        try:
+            return fn()
+        except Exception as e:
+            msg = str(e)
+            if k == tries - 1 or not any(x in msg for x in ("Too many concurrent", "Too Many Requests", "429", "rate limit")):
+                raise
+            time.sleep(15 * 2 ** k + random.uniform(0, 10))

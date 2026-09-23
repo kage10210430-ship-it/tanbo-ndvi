@@ -18,9 +18,9 @@ ndvi.json の形式（v2）:
 --backend fake --fake-csv <file> を付けると GEE を使わずに CSV（pid,date,mean,count[,src]）から
 同じ形式を作る（動作確認用）。
 """
-import argparse, os, sys, json, time, random, datetime as dt
+import argparse, os, sys, json, time, datetime as dt
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from common import load_config, write_json, read_json, round_coords
+from common import load_config, write_json, read_json, round_coords, with_retry
 
 MAX_FEATURES_PER_CALL = 4500      # getInfo の要素数上限(5000)に余裕を持たせる
 MIN_PCT = 50                      # これ未満の有効画素率の観測は保存しない
@@ -32,18 +32,6 @@ SOURCES = {
     "s2": {"dates": "dates", "p": "p", "scale": 10, "div": 1, "lookback": LOOKBACK_DAYS},
     "ls": {"dates": "ldates", "p": "lp", "scale": 30, "div": 9, "lookback": 30},
 }
-
-
-def with_retry(fn, tries=6):
-    """GEE の同時実行数制限（Too many concurrent aggregations など）は待って再試行する"""
-    for k in range(tries):
-        try:
-            return fn()
-        except Exception as e:
-            msg = str(e)
-            if k == tries - 1 or not any(x in msg for x in ("Too many concurrent", "Too Many Requests", "429", "rate limit")):
-                raise
-            time.sleep(15 * 2 ** k + random.uniform(0, 10))
 
 
 def mask_id(cfg):
@@ -267,6 +255,7 @@ def main():
     ap.add_argument("--backend", choices=["gee", "fake"], default="gee")
     ap.add_argument("--fake-csv")
     ap.add_argument("--cells", help="カンマ区切りでセルIDを限定（テスト用）")
+    ap.add_argument("--pixel-minutes", type=float, default=240, help="圃場内マップの画素データ作成に使う時間の上限（分）")
     args = ap.parse_args()
 
     cfg = load_config()
@@ -309,6 +298,37 @@ def main():
                 break
             if (time.time() - t0) >= args.max_minutes * 60 and pending:
                 log(f"時間切れ。残り {len(pending)} セルは次回に続けます。"); pending = []
+    log(f"NDVI 完了: {done}セル処理, 観測日を合計 {total} 追加")
+
+    # 圃場内マップ（10m画素）。NDVI のあとに残り時間で作る。途中で切れても次回に続きから。
+    if cfg.get("pixel_maps") and args.backend == "gee":
+        from pixels import GEEPixels, update_cell, windows
+        psrc = GEEPixels(backend); mid = mask_id(cfg)
+        t1 = time.time(); limit = min(args.pixel_minutes * 60, 330 * 60 - (t1 - t0))
+        cur = windows(cfg, today)[-1][0]
+        def px_key(c):          # 今年の分がまだないセルから
+            m = read_json(os.path.join(data_dir, "cells", c["id"], f"px_{cur}.json")) or {}
+            return (m.get("mask") == mid, max(m.get("src_dates") or [""]))
+        pcells = sorted(cells, key=px_key); pdone = 0; pdays = 0
+        with ThreadPoolExecutor(max_workers=args.workers) as ex:
+            futs = {}; pending = list(pcells)
+            while pending or futs:
+                while pending and len(futs) < args.workers and time.time() - t1 < limit:
+                    c = pending.pop(0)
+                    futs[ex.submit(update_cell, psrc, cfg, data_dir, c, today, mid, log)] = c["id"]
+                if not futs:
+                    break
+                for f in as_completed(list(futs)):
+                    cid = futs.pop(f)
+                    try:
+                        pdays += f.result(); pdone += 1
+                    except Exception as e:
+                        log(f"{cid}: 圃場内マップ エラー {e}")
+                    break
+                if time.time() - t1 >= limit and pending:
+                    log(f"圃場内マップ 時間切れ。残り {len(pending)} セルは次回に続けます。"); pending = []
+        log(f"圃場内マップ 完了: {pdone}セル, 画素データを合計 {pdays} 日分取得")
+
     index["updated"] = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     index["source"] = "Sentinel-2 L2A (Copernicus)" + (" + Landsat 8/9 (NASA HLS)" if cfg.get("landsat") else "") + " / Google Earth Engine"
     write_json(os.path.join(data_dir, "index.json"), index)

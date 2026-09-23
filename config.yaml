@@ -32,6 +32,8 @@ max_scene_cloud:          # シーン雲量(%)がこれ以上の画像は使わ�
 cloud_score_min: 0.6      # Cloud Score+ の晴れ度（0〜1）。これ以上の画素だけ使う。上げるほど厳しい
 landsat: true             # Landsat 8/9（NASA HLS, 30m）も使う（観測を増やす）
 landsat_min_pixels: 2     # Landsat の30m画素がこれ未満しか入らない小さい区画には使わない
+pixel_maps: true          # 圃場内マップ（10m画素ごとの NDVI）を作る
+pixel_window: ["05-15", "09-25"]   # 圃場内マップを作る期間（今年と昨年）
 
 # 出力先
 site_dir: ./site

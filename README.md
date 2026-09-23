@@ -18,6 +18,7 @@
         └ cells/<id>/
            ├ parcels.geojson  （区画の形（約1m単位に丸め）・有効画素の期待数）
            ├ inner.geojson    （計算用: 畦畔を避けて5m内側に縮めた形）
+           ├ px_<年>.png/json （圃場内マップ: 晴れた日の10m画素のNDVI）
            └ ndvi.json        （観測日 × 区画の NDVI と有効画素率。50%未満の観測は保存しない）
                │
                ▼
@@ -76,6 +77,8 @@ Actions → `weekly-ndvi` → **Run workflow**。初回は過去24か月分を�
 | `cloud_score_min` | 雲判定 Cloud Score+ の晴れ度（0〜1）。これ以上の画素だけ使う。変えると次回の更新で全期間を計算し直す |
 | `landsat` | Landsat 8/9（NASA HLS, 30m）も使う。Sentinel-2 がない日の観測を補う（グラフでは白抜きの点） |
 | `landsat_min_pixels` | Landsat の30m画素がこれ未満しか入らない小さい区画には Landsat を使わない |
+| `pixel_maps` | 圃場内マップ（10m画素ごとの NDVI）を作る。地図の「塗り方」で圃場内（絶対・相対）を選ぶと、選んだ田んぼの中を色分けする |
+| `pixel_window` | 圃場内マップを作る期間（月-日）。今年と昨年の分を作る |
 | `cell_deg_lon/lat` | 配信ファイルの分割単位 |
 
 ## ローカルでの動作確認（GEE 不要）
