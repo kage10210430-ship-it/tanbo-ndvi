@@ -18,7 +18,7 @@
         └ cells/<id>/
            ├ parcels.geojson  （区画の形・有効画素の期待数）
            ├ inner.geojson    （計算用: 畦畔を避けて5m内側に縮めた形）
-           └ ndvi.json        （観測日 × 区画の NDVI と画素数）
+           └ ndvi.json        （観測日 × 区画の NDVI と有効画素率。50%未満の観測は保存しない）
                │
                ▼
        site/index.html      ← 表示範囲のセルだけ読み込む地図ビューア
@@ -72,7 +72,8 @@ Actions → `weekly-ndvi` → **Run workflow**。初回は過去24か月分を�
 | `only_paddy` | 田（land_type=100）だけを対象にする |
 | `edge_m` | 畦畔を避けて内側に縮める距離。10m画素なら5mが目安 |
 | `history_months` | 初回にさかのぼる月数（前年重ね表示には24） |
-| `max_scene_cloud` | シーン雲量がこれ以上の画像は使わない |
+| `max_scene_cloud` | シーン雲量がこれ以上の画像は使わない。空欄なら画像全体の雲量では捨てない（区画ごとに判定） |
+| `cloud_score_min` | 雲判定 Cloud Score+ の晴れ度（0〜1）。これ以上の画素だけ使う。変えると次回の更新で全期間を計算し直す |
 | `cell_deg_lon/lat` | 配信ファイルの分割単位 |
 
 ## ローカルでの動作確認（GEE 不要）

@@ -3,10 +3,14 @@ Google Earth Engine で計算し、cells/<id>/ndvi.json に追記する。
 
   python pipeline/update_ndvi.py --max-minutes 300 --workers 4
 
-ndvi.json の形式:
-  {"dates": ["2025-09-25", ...],
-   "p": {"<pid>": [[ndvi, count] | null, ...]}}     # dates と同じ並び
-有効画素率は表示側で count / full（parcels.geojson の full）から出す。
+ndvi.json の形式（v2）:
+  {"v": 2, "mask": "<雲判定の方式>",
+   "dates": ["2025-09-25", ...],                     # 計算済みの観測日（昇順）
+   "p": {"<pid>": [i, ndvi1000, pct, i, ndvi1000, pct, ...]}}
+    i = dates の添字, ndvi1000 = NDVI×1000 の整数, pct = 有効画素率(%)
+  有効画素率が MIN_PCT 未満の観測は保存しない（表示側の下限も同じ）。
+雲判定の方式（mask）が変わったセルは ndvi_next.json に過去分から計算し直し、
+最新まで追いついたら ndvi.json と入れ替える（それまでは古い ndvi.json を表示）。
 
 --backend fake --fake-csv <file> を付けると GEE を使わずに CSV（pid,date,mean,count）から
 同じ形式を作る（動作確認用）。
@@ -16,6 +20,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from common import load_config, write_json, read_json
 
 MAX_FEATURES_PER_CALL = 4500      # getInfo の要素数上限(5000)に余裕を持たせる
+MIN_PCT = 50                      # これ未満の有効画素率の観測は保存しない
+LOOKBACK_DAYS = 15                # 雲判定データの配信遅れに備えて、直近はもう一度確認する
+
+
+def mask_id(cfg):
+    sc = cfg.get("max_scene_cloud")
+    return f"csplus{cfg.get('cloud_score_min', 0.6):.2f}" + (f"-scene{sc}" if sc else "")
 
 
 # ---------------- GEE backend ----------------
@@ -32,17 +43,24 @@ class GEEBackend:
         self.cfg = cfg
 
     def _col(self, bbox, start, end):
+        """雲判定は Cloud Score+（cs_cdf がしきい値以上の画素だけ使う）。
+        シーン全体の雲量では捨てない（max_scene_cloud が空欄のとき）ので、晴れ間の区画も拾える。"""
         ee = self.ee
         region = ee.Geometry.Rectangle(bbox)
+        thr = self.cfg.get("cloud_score_min", 0.6)
         def prep(img):
             scl = img.select("SCL")
-            good = scl.eq(2).Or(scl.eq(4)).Or(scl.eq(5)).Or(scl.eq(6)).Or(scl.eq(7))
-            return (img.normalizedDifference(["B8", "B4"]).rename("NDVI").updateMask(good)
+            ok = img.select("cs_cdf").gte(thr).And(scl.neq(0)).And(scl.neq(1)).And(scl.neq(11))   # 欠測・飽和・雪は除く
+            return (img.normalizedDifference(["B8", "B4"]).rename("NDVI").updateMask(ok)
                     .copyProperties(img, ["system:time_start"]))
-        return (ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
-                .filterBounds(region).filterDate(start, end)
-                .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", self.cfg["max_scene_cloud"]))
-                .map(prep))
+        col = (ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+               .filterBounds(region).filterDate(start, end))
+        if self.cfg.get("max_scene_cloud"):
+            col = col.filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", self.cfg["max_scene_cloud"]))
+        csp = ee.ImageCollection("GOOGLE/CLOUD_SCORE_PLUS/V1/S2_HARMONIZED").filterBounds(region).filterDate(start, end)
+        # 雲判定がまだ出ていない画像は使わない（次回以降、LOOKBACK_DAYS の範囲で拾い直す）
+        col = col.filter(ee.Filter.inList("system:index", csp.aggregate_array("system:index")))
+        return col.linkCollection(csp, ["cs_cdf"]).map(prep)
 
     def list_dates(self, bbox, start, end):
         """期間内の観測日（UTC日付, YYYY-MM-DD）を返す"""
@@ -92,35 +110,77 @@ class FakeBackend:
 
 
 # ---------------- main ----------------
+def load_full(cdir):
+    """pid -> 10m画素の期待数（parcels.geojson の full）"""
+    g = read_json(os.path.join(cdir, "parcels.geojson"), {"features": []})
+    return {f["properties"]["pid"]: f["properties"].get("full") or 0 for f in g["features"]}
+
+
+def cell_state(cfg, cdir):
+    """(書き込み先, ndvi データ, 並べ替えキー)。方式が変わったセルは ndvi_next.json に計算し直す。"""
+    mid = mask_id(cfg)
+    cur = read_json(os.path.join(cdir, "ndvi.json"))
+    if cur and cur.get("v") == 2 and cur.get("mask") == mid:
+        return "ndvi.json", cur, cur["dates"][-1] if cur["dates"] else ""
+    nxt = read_json(os.path.join(cdir, "ndvi_next.json"))
+    if not (nxt and nxt.get("v") == 2 and nxt.get("mask") == mid):
+        nxt = {"v": 2, "mask": mid, "dates": [], "p": {}}
+    return "ndvi_next.json", nxt, " " + (nxt["dates"][-1] if nxt["dates"] else "")   # 計算し直しのセルを先に
+
+
+def sort_dates(nd):
+    """dates を昇順に並べ直し、区画ごとの添字も付け替える"""
+    if nd["dates"] == sorted(nd["dates"]):
+        return
+    order = sorted(range(len(nd["dates"])), key=lambda i: nd["dates"][i])
+    new_i = {old: new for new, old in enumerate(order)}
+    nd["dates"] = [nd["dates"][i] for i in order]
+    for pid, a in nd["p"].items():
+        t = sorted(((new_i[a[k]], a[k + 1], a[k + 2]) for k in range(0, len(a), 3)))
+        nd["p"][pid] = [x for tr in t for x in tr]
+
+
 def process_cell(backend, cfg, data_dir, cell, start_default, end, log):
     cid = cell["id"]; cdir = os.path.join(data_dir, "cells", cid)
-    nd = read_json(os.path.join(cdir, "ndvi.json"), {"dates": [], "p": {}})
     inner = read_json(os.path.join(cdir, "inner.geojson"))
     if not inner:
         return cid, 0
+    fname, nd, _ = cell_state(cfg, cdir)
+    full = load_full(cdir)
     pids = [f["properties"]["pid"] for f in inner["features"]]
-    for pid in pids:                       # 新しい区画が増えていたら列を揃える
-        if pid not in nd["p"]:
-            nd["p"][pid] = [None] * len(nd["dates"])
     have = set(nd["dates"])
-    start = (dt.date.fromisoformat(nd["dates"][-1]) + dt.timedelta(days=1)).isoformat() if nd["dates"] else start_default
+    start = start_default
+    if nd["dates"]:
+        nxt = (dt.date.fromisoformat(nd["dates"][-1]) + dt.timedelta(days=1)).isoformat()
+        back = (dt.date.fromisoformat(end) - dt.timedelta(days=LOOKBACK_DAYS)).isoformat()
+        start = max(start_default, min(nxt, back))
     dates = [d for d in backend.list_dates(cell["bbox"], start, end) if d not in have]
-    if not dates:
-        return cid, 0
-    per_call = max(1, MAX_FEATURES_PER_CALL // max(1, len(pids)))
     added = 0
+    per_call = max(1, MAX_FEATURES_PER_CALL // max(1, len(pids)))
     for i in range(0, len(dates), per_call):
         chunk = dates[i:i + per_call]
         res = backend.stats(cell["bbox"], inner, chunk)
         for d in chunk:
-            nd["dates"].append(d)
+            di = len(nd["dates"]); nd["dates"].append(d)
             for pid in pids:
                 v = res.get(d, {}).get(pid)
-                nd["p"][pid].append(v if v else None)
+                if not v:
+                    continue
+                f = full.get(pid) or v[1] or 1
+                pct = int(100 * min(1.0, v[1] / f) + 1e-6)   # 切り捨て（しきい値の判定を従来と同じにする）
+                if pct >= MIN_PCT:
+                    nd["p"].setdefault(pid, []).extend([di, round(v[0] * 1000), pct])
             added += 1
+        sort_dates(nd)
         # 途中で落ちても進捗を失わないよう都度保存
+        write_json(os.path.join(cdir, fname), nd)
+    if fname == "ndvi_next.json":              # 最新まで追いついたので入れ替える
         write_json(os.path.join(cdir, "ndvi.json"), nd)
-    log(f"{cid}: +{added}日 (区画{len(pids)})")
+        if os.path.exists(os.path.join(cdir, "ndvi_next.json")):
+            os.remove(os.path.join(cdir, "ndvi_next.json"))
+        log(f"{cid}: 新しい雲判定で計算し直し完了 ({len(nd['dates'])}日, 区画{len(pids)})")
+    elif added:
+        log(f"{cid}: +{added}日 (区画{len(pids)})")
     return cid, added
 
 
@@ -147,10 +207,7 @@ def main():
     if args.cells:
         want = set(args.cells.split(",")); cells = [c for c in cells if c["id"] in want]
     # 更新が古いセルから処理（時間切れでも次回に続きができる）
-    def last_date(c):
-        nd = read_json(os.path.join(data_dir, "cells", c["id"], "ndvi.json"))
-        return nd["dates"][-1] if nd and nd["dates"] else ""
-    cells = sorted(cells, key=last_date)
+    cells = sorted(cells, key=lambda c: cell_state(cfg, os.path.join(data_dir, "cells", c["id"]))[2])
 
     t0 = time.time(); total = 0; done = 0
     def log(m): print(time.strftime("%H:%M:%S"), m, flush=True)

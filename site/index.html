@@ -993,7 +993,8 @@ async function loadVisible(){
     try{
       const [g,n]=await Promise.all([fetch(`${DATA}cells/${c.id}/parcels.geojson`).then(r=>r.json()), fetch(`${DATA}cells/${c.id}/ndvi.json`).then(r=>r.ok?r.json():{dates:[],p:{}})]);
       const full={}; for(const f of g.features){ f.properties.pid=String(f.properties.pid); full[f.properties.pid]=f.properties.full||1; }
-      for(const pid in n.p){ pkg.series[pid]=n.dates.map((d,i)=>{ const v=n.p[pid][i]; return v?[d,v[0],Math.min(1,v[1]/(full[pid]||v[1]||1))]:null; }).filter(Boolean); }
+      if(n.v===2){ for(const pid in n.p){ const a=n.p[pid], rows=[]; for(let k=0;k<a.length;k+=3) rows.push([n.dates[a[k]],a[k+1]/1000,a[k+2]/100]); pkg.series[pid]=rows.sort((x,y)=>x[0]<y[0]?-1:1); } }   // [添字, NDVI×1000, 有効画素率%] の並び
+      else for(const pid in n.p){ pkg.series[pid]=n.dates.map((d,i)=>{ const v=n.p[pid][i]; return v?[d,v[0],Math.min(1,v[1]/(full[pid]||v[1]||1))]:null; }).filter(Boolean); }
       pkg.parcels.features.push(...g.features); geoLayer.addData(g); dataVer++;
     }catch(e){ loadedCells.delete(c.id); console.error(c.id,e); }
   }));
