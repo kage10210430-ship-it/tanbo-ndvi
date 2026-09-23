@@ -761,6 +761,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
       <div class="ctl"><label>有効画素率 <input type="number" id="thr" min="50" max="100" step="5" value="70" style="width:64px">% 以上</label>
         <label>近隣の半径 <input type="number" id="nbR" min="100" max="2000" step="100" value="500" style="width:72px">m</label></div>
       <div class="ctl"><label><input type="checkbox" id="dipOn" checked>1区画だけ一時的に落ち込んだ観測（雲・かすみ）を除く</label></div>
+      <div class="ctl"><label><input type="checkbox" id="lsOn" checked>前後の Sentinel-2 と0.15以上違う Landsat の点を除く</label></div>
       <div class="excl" id="excl"></div>
       <div class="ctl"><select id="addExcl"></select><button class="btn small" id="btnAddExcl">この日を除外</button></div>
     </details>
@@ -818,16 +819,23 @@ function tipText(pid){ const s=seriesOf(pid); const last=s[s.length-1]; return `
 // ---------- data access ----------
 function thr(){ return (+document.getElementById('thr').value||70)/100; }
 function dipOn(){ return document.getElementById('dipOn').checked; }
+function lsCheckOn(){ return document.getElementById('lsOn').checked; }
+function lsFits(s2,t,v){ // Landsat の値が前後の Sentinel-2（各20日以内）を結んだ線から0.15未満のずれか。前後が揃わなければ判定しない
+  let i=0; while(i<s2.length&&s2[i][0]<t) i++; const pv=s2[i-1], nx=s2[i];
+  if(!pv||!nx||t-pv[0]>20*864e5||nx[0]-t>20*864e5) return true;
+  return Math.abs(v-(pv[1]+(nx[1]-pv[1])*(t-pv[0])/(nx[0]-pv[0])))<0.15;
+}
 function isDip(s,i){ // one parcel only: lower than both neighbours (each within 15 days) by 0.2 or more
   if(i<=0||i>=s.length-1) return false; const pv=s[i-1],nx=s[i+1],tD=Date.parse(s[i][0]);
   if(tD-Date.parse(pv[0])>15*864e5||Date.parse(nx[0])-tD>15*864e5) return false;
   return pv[1]-s[i][1]>=0.2-1e-9&&nx[1]-s[i][1]>=0.2-1e-9;
 }
-// filtered rows per parcel, cached; rebuilt when threshold / excluded days / dip filter / data change
+// filtered rows per parcel, cached; rebuilt when threshold / excluded days / dip or Landsat filter / data change
 let clean=new Map(), cleanKey='', dataVer=0;
-function syncClean(){ const k=`${thr()}|${dipOn()}|${[...excluded].sort().join()}|${dataVer}`; if(k!==cleanKey){ clean=new Map(); cleanKey=k; } }
+function syncClean(){ const k=`${thr()}|${dipOn()}|${lsCheckOn()}|${[...excluded].sort().join()}|${dataVer}`; if(k!==cleanKey){ clean=new Map(); cleanKey=k; } }
 function cleanOf(pid){ let c=clean.get(pid); if(c) return c;
-  const t=thr()-1e-9, s=(pkg.series[pid]||[]).filter(r=>r[2]>=t&&!excluded.has(r[0])), dip=dipOn();
+  const t=thr()-1e-9, dip=dipOn(); let s=(pkg.series[pid]||[]).filter(r=>r[2]>=t&&!excluded.has(r[0]));
+  if(lsCheckOn()&&s.some(r=>r[3]==='L')){ const s2=s.filter(r=>r[3]!=='L').map(r=>[Date.parse(r[0]),r[1]]); s=s.filter(r=>r[3]!=='L'||lsFits(s2,Date.parse(r[0]),r[1])); }
   const rows=s.filter((r,i)=>!(dip&&isDip(s,i))); c={rows,by:new Map(rows.map(r=>[r[0],r[1]]))}; clean.set(pid,c); return c; }
 function seriesOf(pid){ return cleanOf(pid).rows.map(r=>({date:r[0],t:Date.parse(r[0]+'T00:00:00Z'),ndvi:r[1],ls:r[3]==='L'})); }
 function val(pid,d){ const v=cleanOf(pid).by.get(d); return v===undefined?null:v; }
@@ -953,7 +961,7 @@ function buildExcl(){
 }
 document.getElementById('btnAddExcl').onclick=()=>{const d=document.getElementById('addExcl').value; if(d){excluded.add(d); refresh();}};
 document.getElementById('thr').onchange=()=>{detectOutliers(); buildColorDates(); refresh();};
-document.getElementById('dipOn').onchange=refresh;
+document.getElementById('dipOn').onchange=refresh; document.getElementById('lsOn').onchange=refresh;
 document.getElementById('nbR').onchange=refresh; document.getElementById('nbOn').onchange=refresh;
 document.getElementById('mode').onchange=refresh; document.getElementById('tp').onchange=refresh;
 
