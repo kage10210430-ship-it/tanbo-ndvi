@@ -760,6 +760,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
       <summary>詳細設定・除外している日</summary>
       <div class="ctl"><label>有効画素率 <input type="number" id="thr" min="50" max="100" step="5" value="70" style="width:64px">% 以上</label>
         <label>近隣の半径 <input type="number" id="nbR" min="100" max="2000" step="100" value="500" style="width:72px">m</label></div>
+      <div class="ctl"><label><input type="checkbox" id="dipOn" checked>1区画だけ一時的に落ち込んだ観測（雲・かすみ）を除く</label></div>
       <div class="excl" id="excl"></div>
       <div class="ctl"><select id="addExcl"></select><button class="btn small" id="btnAddExcl">この日を除外</button></div>
     </details>
@@ -816,8 +817,15 @@ function tipText(pid){ const s=seriesOf(pid); const last=s[s.length-1]; return `
 
 // ---------- data access ----------
 function thr(){ return (+document.getElementById('thr').value||70)/100; }
-function seriesOf(pid){ return (pkg.series[pid]||[]).filter(r=>r[2]>=thr()-1e-9&&!excluded.has(r[0])).map(r=>({date:r[0],t:Date.parse(r[0]+'T00:00:00Z'),ndvi:r[1]})); }
-function val(pid,d){ const r=(pkg.series[pid]||[]).find(r=>r[0]===d); return (r&&r[2]>=thr()-1e-9&&!excluded.has(d))?r[1]:null; }
+function dipOn(){ return document.getElementById('dipOn').checked; }
+function isDip(s,i){ // one parcel only: lower than both neighbours (each within 15 days) by 0.2 or more
+  if(i<=0||i>=s.length-1) return false; const pv=s[i-1],nx=s[i+1],tD=Date.parse(s[i][0]);
+  if(tD-Date.parse(pv[0])>15*864e5||Date.parse(nx[0])-tD>15*864e5) return false;
+  return pv[1]-s[i][1]>=0.2-1e-9&&nx[1]-s[i][1]>=0.2-1e-9;
+}
+function rowsOf(pid){ return (pkg.series[pid]||[]).filter(r=>r[2]>=thr()-1e-9&&!excluded.has(r[0])); }
+function seriesOf(pid){ const s=rowsOf(pid), dip=dipOn(); return s.filter((r,i)=>!(dip&&isDip(s,i))).map(r=>({date:r[0],t:Date.parse(r[0]+'T00:00:00Z'),ndvi:r[1]})); }
+function val(pid,d){ const s=rowsOf(pid), i=s.findIndex(r=>r[0]===d); return (i>=0&&!(dipOn()&&isDip(s,i)))?s[i][1]:null; }
 function detectOutliers(){
   autoFlag={}; excluded=new Set(); const t=thr();
   for(const d of allDates){
@@ -852,7 +860,7 @@ function buildColorDates(){
   const sel=document.getElementById('colorDate'); sel.innerHTML='';
   const n=Object.keys(parcels).length;
   const cov=allDates.map(d=>({d,c:Object.keys(parcels).filter(p=>val(p,d)!=null).length})).filter(x=>x.c>0);
-  for(const x of cov.slice().reverse()){ const o=document.createElement('option'); o.value=x.d; o.textContent=`${x.d}（${Math.round(x.c/n*100)}%）`; sel.appendChild(o); }
+  for(const x of cov.slice().reverse()){ const o=document.createElement('option'); o.value=x.d; o.textContent=`${x.d}（雲なし${Math.round(x.c/n*100)}%）`; sel.appendChild(o); }
   const good=cov.filter(x=>x.c/n>=0.5); sel.value=good.length?good[good.length-1].d:(cov.length?cov[cov.length-1].d:'');
 }
 function paintMap(){
@@ -937,6 +945,7 @@ function buildExcl(){
 }
 document.getElementById('btnAddExcl').onclick=()=>{const d=document.getElementById('addExcl').value; if(d){excluded.add(d); refresh();}};
 document.getElementById('thr').onchange=()=>{detectOutliers(); buildColorDates(); refresh();};
+document.getElementById('dipOn').onchange=refresh;
 document.getElementById('nbR').onchange=refresh; document.getElementById('nbOn').onchange=refresh;
 document.getElementById('mode').onchange=refresh; document.getElementById('tp').onchange=refresh;
 
