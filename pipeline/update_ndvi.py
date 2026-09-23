@@ -181,9 +181,10 @@ def cell_state(cfg, cdir):
         if not (nxt and nxt.get("v") == 2 and nxt.get("mask") == mid):
             nxt = {"v": 2, "mask": mid, "dates": [], "p": {}}
         fname, nd = "ndvi_next.json", nxt
-    if "ls" in sources(cfg) and nd.get("lmask") != LANDSAT_MASK:     # Landsat は初回・方式変更時に全期間を計算
+    lfresh = "ls" in sources(cfg) and nd.get("lmask") != LANDSAT_MASK
+    if lfresh:                                   # Landsat は初回・方式変更時に全期間を計算
         nd.update({"lmask": LANDSAT_MASK, "ldates": [], "lp": {}})
-    fresh = fname == "ndvi_next.json" or ("ls" in sources(cfg) and not nd["ldates"])
+    fresh = fname == "ndvi_next.json" or lfresh
     return fname, nd, (" " if fresh else "") + (nd["dates"][-1] if nd["dates"] else "")   # 計算し直しのセルを先に
 
 
@@ -203,8 +204,13 @@ def sort_dates(nd, src="s2"):
 def update_source(backend, cfg, cdir, fname, nd, cell, inner, full, src, start_default, end):
     """1つの観測元について、まだ計算していない観測日を足す。足した日数を返す。"""
     S = SOURCES[src]; kd, kp = S["dates"], S["p"]
-    pids = [f["properties"]["pid"] for f in inner["features"]]
     min_px = cfg.get("landsat_min_pixels", 2) if src == "ls" else 1
+    if src == "ls":                              # 30m画素が十分入る区画だけ計算する
+        inner = {"type": "FeatureCollection", "features": [f for f in inner["features"]
+                 if (full.get(f["properties"]["pid"]) or 0) / S["div"] >= min_px]}
+        if not inner["features"]:
+            return 0
+    pids = [f["properties"]["pid"] for f in inner["features"]]
     have = set(nd[kd])
     start = start_default
     if nd[kd]:
