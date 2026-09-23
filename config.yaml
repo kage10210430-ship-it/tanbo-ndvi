@@ -2,23 +2,24 @@
 #  田んぼNDVI 事前計算パイプライン 設定
 # ============================================================
 
-# 区画データの入手先（複数可）。筆ポリゴン公開サイト / 農水省ページのURL、
-# またはローカルのファイルパス。対応形式: FlatGeobuf(.fgb) / GeoJSON / Shapefile(.zip)
-# 例: https://www.maff.go.jp/... の福井県 FlatGeobuf 分割ファイル
+# 区画データ（筆ポリゴン）の入手先。農林水産省「筆ポリゴンデータ(2026年)」の
+# 福井県 分割1・分割2。自動でダウンロード・連結・展開します（手でダウンロード不要）
 parcel_sources:
-  - ./sample/genshu_center_parcels.fgb   # ← 動作確認用。本番は筆ポリゴンのURL/パスに置き換える
+  - https://www.maff.go.jp/j/tokei/census/shuraku_data/2025/mb/MB0001_2026_2025_18.zip.001
+  - https://www.maff.go.jp/j/tokei/census/shuraku_data/2025/mb/MB0001_2026_2025_18.zip.002
 
-# 対象範囲（西, 南, 東, 北）。null なら区画データ全体
-bbox: null              # 例: [135.95, 35.35, 136.85, 36.30]  福井県全域
+# 対象範囲（西, 南, 東, 北）。まずは原種センター周辺だけ。
+# 県全体にするときは  bbox: null  に書き換える
+bbox: [136.26, 36.05, 136.30, 36.07]
 
-# 田だけを対象にする（筆ポリゴンの land_type: 100=田, 200=畑）
+# 田だけを対象にする
 only_paddy: true
 
-# 区画IDと種別の列名（筆ポリゴン公開サイト版の既定）。無ければ連番になる
-id_field: polygon_uuid
-land_type_field: land_type
+# 区画IDと種別の列名（空欄なら自動で探す）
+id_field:
+land_type_field:
 
-# 配信用グリッド（この単位でファイルを分ける）。1/40度×1/60度 ≒ 2.2km×1.85km
+# 配信用グリッド（この単位でファイルを分ける）。約2.2km×1.85km
 cell_deg_lon: 0.025
 cell_deg_lat: 0.01667
 
@@ -28,7 +29,6 @@ edge_m: 5
 # NDVI計算
 history_months: 24        # 初回にさかのぼる期間
 max_scene_cloud: 70       # シーン雲量(%)がこれ以上の画像は使わない
-min_valid: 0.0            # 配信データには全観測を入れ、表示側で有効画素率を絞る
 
 # 出力先
 site_dir: ./site
