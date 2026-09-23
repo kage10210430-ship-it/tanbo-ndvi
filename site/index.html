@@ -688,6 +688,8 @@ svg.leaflet-image-layer.leaflet-interactive path {
   .mapbar select{font:inherit;font-size:13px;padding:4px;border:1px solid var(--line);border-radius:4px;max-width:200px}
   .mapbar .bar{height:10px;border-radius:3px;background:linear-gradient(90deg,#a0522d,#f5e663,#7fc41c,#0b6b1e);margin:5px 0 2px}
   .mapbar .lbl{display:flex;justify-content:space-between;font-size:11px;color:var(--ink2)}
+  .mapbar .bar.rel{background:linear-gradient(90deg,#a0522d,#f5e663,#0b6b1e)}
+  .mapbar .pxnote{font-size:11.5px;color:var(--ink2)}
   .mapwrap{position:relative;min-width:0}
   .maphint{position:absolute;z-index:500;top:10px;left:50%;transform:translateX(-50%);background:rgba(30,58,47,.9);color:#fff;padding:6px 12px;border-radius:20px;font-size:13px;pointer-events:none;white-space:nowrap}
   .maphint.hidden{display:none}
@@ -732,7 +734,8 @@ svg.leaflet-image-layer.leaflet-interactive path {
     <div class="maphint" id="maphint">地図を拡大すると区画が表示されます</div>
     <div class="mapbar">
       <div class="ctl" style="margin:0"><span>色の日付</span><select id="colorDate"></select><label><input type="checkbox" id="colorOn" checked>区画を色分け</label></div>
-      <div class="bar"></div><div class="lbl"><span>低い 0.2</span><span>NDVI</span><span>0.9 高い</span></div>
+      <div class="ctl" style="margin:4px 0 0"><span>塗り方</span><select id="fillMode"><option value="avg">区画の平均</option><option value="abs">圃場内（絶対）</option><option value="rel">圃場内（相対）</option></select><span class="pxnote" id="pxNote"></span></div>
+      <div class="bar" id="lgBar"></div><div class="lbl" id="lgLbl"><span>低い 0.2</span><span>NDVI</span><span>0.9 高い</span></div>
     </div>
   </div>
   <aside class="side">
@@ -785,6 +788,7 @@ let allDates=[];
 
 // ---------- map ----------
 const map=L.map('map',{zoomControl:true,attributionControl:true}).setView([36.06,136.28],15);
+map.createPane('pxPane').style.zIndex=390;
 const gsi='https://cyberjapandata.gsi.go.jp/xyz/';
 const photo=L.tileLayer(gsi+'seamlessphoto/{z}/{x}/{y}.jpg',{maxZoom:18,attribution:'地理院タイル（航空写真）'});
 const std=L.tileLayer(gsi+'pale/{z}/{x}/{y}.png',{maxZoom:18,attribution:'地理院タイル'});
@@ -859,7 +863,7 @@ function neighborSeries(){ // mean over neighbors of all selected
 }
 
 // ---------- selection ----------
-function toggleSelect(pid){
+function toggleSelect(pid){ setTimeout(()=>{ if(fillMode()!=='avg') buildPxDates(); },0);
   const i=selected.findIndex(s=>s.pid===pid);
   if(i>=0) selected.splice(i,1);
   else { if(selected.length>=6){ setStatus('選べるのは6枚までです。チップの×で外してから選んでください。'); return; } const used=selected.map(s=>s.color); selected.push({pid,color:PALETTE.find(c=>!used.includes(c))||PALETTE[0]}); setStatus(''); }
@@ -882,8 +886,78 @@ function paintMap(){
   for(const pid in parcels){ const s=selected.find(s=>s.pid===pid); const v=on?val(pid,d):null;
     const l=parcels[pid].layer, st={color:s?s.color:'#fff',weight:s?4:1,opacity:s?1:.8,fillColor:on?ndviColor(v):'#888',fillOpacity:on?(v==null?.15:.65):.3}, k=Object.values(st).join('|');
     if(l._stk!==k){ l.setStyle(st); l._stk=k; } if(s) l.bringToFront(); }
+  renderPx();
 }
 document.getElementById('colorDate').onchange=paintMap; document.getElementById('colorOn').onchange=paintMap;
+
+// ---------- 圃場内マップ（10m画素） ----------
+// cells/<id>/px_<年>.png: 晴れた日を縦に積んだグレースケール（0=雲・田以外, 1〜255=NDVI -0.2〜1.0）。座標は EPSG:3857
+const pxLayer=L.layerGroup().addTo(map), pxCache={}; let pxGen=0;
+const REL=0.15;   // 相対表示の目盛り（平均との差 ±15%）
+function fillMode(){ return document.getElementById('fillMode').value; }
+function pxLoad(cell,year){ const key=cell+'|'+year;
+  if(!(key in pxCache)) pxCache[key]=fetch(`${DATA}cells/${cell}/px_${year}.json`).then(r=>r.ok?r.json():null).then(async m=>{
+    if(!m||!m.dates.length) return m?{m,g:null}:null;
+    const img=new Image(); img.src=`${DATA}cells/${cell}/px_${year}.png`; await img.decode();
+    const c=document.createElement('canvas'); c.width=img.width; c.height=img.height; const x=c.getContext('2d',{willReadFrequently:true}); x.drawImage(img,0,0);
+    const d=x.getImageData(0,0,c.width,c.height).data, g=new Uint8Array(c.width*c.height); for(let i=0;i<g.length;i++) g[i]=d[i*4];
+    return {m,g}; }).catch(()=>null);
+  return pxCache[key]; }
+function relColor(t){ t=Math.max(-1,Math.min(1,t)); const a=t<0?[160,82,45]:[11,107,30], b=[245,230,99], u=Math.abs(t); return b.map((c,k)=>Math.round(c+(a[k]-c)*u)); }
+function rgbOf(css){ if(css[0]==='#'){ const h=css.length===4?[...css.slice(1)].map(c=>c+c).join(''):css.slice(1); return [0,2,4].map(i=>parseInt(h.slice(i,i+2),16)); } return css.match(/\d+/g).slice(0,3).map(Number); }
+function inRing(ring,x,y){ let ins=false; for(let i=0,j=ring.length-1;i<ring.length;j=i++){ const [xi,yi]=ring[i],[xj,yj]=ring[j]; if((yi>y)!==(yj>y)&&x<(xj-xi)*(y-yi)/(yj-yi)+xi) ins=!ins; } return ins; }
+function drawPx(pid,r,k,mode){
+  const {m,g}=r, P=parcels[pid], geom=P.feature.geometry, polys=geom.type==='Polygon'?[geom.coordinates]:geom.coordinates;
+  // 区画の形を格子の座標（列, 行）に
+  const rings=polys.map(poly=>poly.map(ring=>ring.map(([lon,lat])=>{ const q=L.CRS.EPSG3857.project(L.latLng(lat,lon)); return [(q.x-m.x0)/m.px,(m.y1-q.y)/m.px]; })));
+  const all=rings.flat(2); const c0=Math.max(0,Math.floor(Math.min(...all.map(p=>p[0])))-1), c1=Math.min(m.w,Math.ceil(Math.max(...all.map(p=>p[0])))+1),
+        r0=Math.max(0,Math.floor(Math.min(...all.map(p=>p[1])))-1), r1=Math.min(m.h,Math.ceil(Math.max(...all.map(p=>p[1])))+1);
+  const cw=c1-c0, ch=r1-r0; if(cw<=0||ch<=0) return false;
+  const inside=(x,y)=>rings.some(poly=>inRing(poly[0],x,y)&&!poly.slice(1).some(h=>inRing(h,x,y)));
+  const val=new Float32Array(cw*ch).fill(NaN); let nin=0,nok=0,sum=0;
+  for(let y=0;y<ch;y++) for(let x=0;x<cw;x++){ const v=g[(k*m.h+r0+y)*m.w+c0+x]; if(!inside(c0+x+.5,r0+y+.5)) continue; nin++; if(v>0){ const nd=(v-1)/254*1.2-0.2; val[y*cw+x]=nd; nok++; sum+=nd; } }
+  if(!nin||nok<nin*0.5) return false;                       // 半分以上が雲なら出さない
+  const mean=sum/nok;
+  for(let pass=0;pass<2;pass++){ const nv=val.slice();       // 雲・区画の外は周りの値でうめる（ぼかしで縁が薄くならないように）
+    for(let y=0;y<ch;y++) for(let x=0;x<cw;x++){ if(!isNaN(val[y*cw+x])) continue; let s=0,n=0;
+      for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++){ const yy=y+dy,xx=x+dx; if(yy<0||xx<0||yy>=ch||xx>=cw) continue; const w=val[yy*cw+xx]; if(!isNaN(w)){s+=w;n++;} }
+      if(n) nv[y*cw+x]=s/n; }
+    val.set(nv); }
+  const A=document.createElement('canvas'); A.width=cw; A.height=ch; const ax=A.getContext('2d'), id=ax.createImageData(cw,ch);
+  for(let i=0;i<cw*ch;i++){ const v=isNaN(val[i])?mean:val[i]; const c=mode==='rel'?relColor((v-mean)/Math.max(0.05,mean)/REL):rgbOf(ndviColor(v)); id.data.set([...c,255],i*4); }
+  ax.putImageData(id,0,0);
+  const S=Math.max(4,Math.min(12,Math.round(400/Math.max(cw,ch)))), B=document.createElement('canvas'); B.width=cw*S; B.height=ch*S;
+  const bx=B.getContext('2d'); bx.beginPath(); for(const poly of rings) for(const ring of poly) ring.forEach(([x,y],i)=>bx[i?'lineTo':'moveTo']((x-c0)*S,(y-r0)*S));
+  bx.clip('evenodd'); bx.imageSmoothingEnabled=true; bx.imageSmoothingQuality='high'; bx.drawImage(A,0,0,cw*S,ch*S);
+  const ll=(c,rr)=>L.CRS.EPSG3857.unproject(L.point(m.x0+c*m.px,m.y1-rr*m.px));
+  L.imageOverlay(B.toDataURL(),L.latLngBounds(ll(c0,r1),ll(c1,r0)),{pane:'pxPane',interactive:false}).addTo(pxLayer);
+  return true;
+}
+async function renderPx(){
+  const gen=++pxGen, mode=fillMode(), on=document.getElementById('colorOn').checked, note=document.getElementById('pxNote');
+  const bar=document.getElementById('lgBar'), lbl=document.getElementById('lgLbl');
+  bar.classList.toggle('rel',mode==='rel');
+  lbl.innerHTML=mode==='rel'?`<span>平均より低い −${REL*100}%</span><span>田の中の差</span><span>+${REL*100}% 高い</span>`:'<span>低い 0.2</span><span>NDVI</span><span>0.9 高い</span>';
+  pxLayer.clearLayers();
+  if(mode==='avg'||!on){ note.textContent=''; return; }
+  if(!selected.length){ note.textContent='田んぼを選ぶと、その中を10m画素で色分けします'; return; }
+  const d=document.getElementById('colorDate').value; let ok=0,miss=0,cloud=0; note.textContent='読み込み中…';
+  for(const s of selected){ const P=parcels[s.pid]; if(!P||!P.cell){ miss++; continue; }
+    const r=await pxLoad(P.cell,d.slice(0,4)); if(gen!==pxGen) return;
+    const k=r&&r.g?r.m.dates.indexOf(d):-1; if(k<0){ miss++; continue; }
+    if(drawPx(s.pid,r,k,mode)){ ok++; P.layer.setStyle({fillOpacity:0}); P.layer._stk=''; } else cloud++; }
+  note.textContent=(ok?'':'')+(miss?`この日の画素なし ${miss}枚（5/15〜9/25の晴れた日だけ）`:'')+(cloud?`${miss?' / ':''}雲で見えない ${cloud}枚`:'');
+}
+async function buildPxDates(){   // 圃場内モードでは、選んだ田んぼの画素がある日だけを並べる
+  const sel=document.getElementById('colorDate'), keep=sel.value;
+  if(fillMode()==='avg'||!selected.length){ buildColorDates(); if([...sel.options].some(o=>o.value===keep)) sel.value=keep; paintMap(); return; }
+  const Y=allDates.length?+allDates[allDates.length-1].slice(0,4):new Date().getFullYear(), ds=new Set();
+  for(const s of selected){ const c=parcels[s.pid]?.cell; if(!c) continue; for(const y of [Y-1,Y]){ const r=await pxLoad(c,y); if(r) r.m.dates.forEach(x=>ds.add(x)); } }
+  const list=[...ds].sort().reverse(); if(!list.length){ buildColorDates(); paintMap(); return; }
+  sel.innerHTML=''; for(const x of list){ const o=document.createElement('option'); o.value=x; o.textContent=`${x}（圃場内あり）`; sel.appendChild(o); }
+  sel.value=list.includes(keep)?keep:list[0]; paintMap();
+}
+document.getElementById('fillMode').onchange=buildPxDates;
 
 // ---------- chips ----------
 function renderChips(){
@@ -929,15 +1003,19 @@ function drawChart(){
   svg.setAttribute('viewBox',`0 0 ${W} ${ly+8}`); svg.innerHTML=g;
   document.getElementById('note').textContent=`除外 ${excluded.size}日 / 有効画素率 ${Math.round(thr()*100)}%以上`;
 }
+let lastPick=null;
 (function(){ const svg=document.getElementById('chart'),tip=document.getElementById('tip');
   const onMove=ev=>{ if(!hoverPts.length) return; const pt=ev.touches?ev.touches[0]:ev; if(ev.touches) ev.preventDefault();
     const r=svg.getBoundingClientRect(); const mx=(pt.clientX-r.left)*W/r.width; let best=null; for(const h of hoverPts){const d=Math.abs(h.px-mx); if(!best||d<best.d) best={d,h};}
-    if(!best||best.d>25){tip.style.display='none';svg.querySelector('#hl')?.setAttribute('visibility','hidden');return;}
+    if(!best||best.d>25){lastPick=null;tip.style.display='none';svg.querySelector('#hl')?.setAttribute('visibility','hidden');return;}
+    lastPick=best.h.p.date;
     const rows=hoverPts.filter(h=>Math.abs(h.x-best.h.x)<1e-6).sort((a,b)=>b.p.ndvi-a.p.ndvi); const mode=document.getElementById('mode').value;
     tip.innerHTML=`<b>${mode==='dat'?'移植後'+Math.round(best.h.x)+'日（'+best.h.p.date+'）':best.h.p.date}</b>`+rows.map(h=>`<div class="r"><span><i style="background:${h.s.color}"></i>${h.s.label}${h.p.ls?'（Landsat）':''}</span><span>${h.p.ndvi.toFixed(2)}</span></div>`).join('');
     tip.style.display='block'; const hl=svg.querySelector('#hl'); hl.setAttribute('x1',best.h.px); hl.setAttribute('x2',best.h.px); hl.setAttribute('visibility','visible');
     const px=best.h.px*r.width/W; tip.style.left=(px+14+tip.offsetWidth>r.width?px-tip.offsetWidth-14:px+14)+'px'; tip.style.top=Math.max(0,(pt.clientY-r.top)-20)+'px'; };
   svg.addEventListener('mousemove',onMove); svg.addEventListener('touchstart',onMove,{passive:false}); svg.addEventListener('touchmove',onMove,{passive:false});
+  const pick=()=>{ const d=lastPick; if(!d) return; const sel=document.getElementById('colorDate'); if([...sel.options].some(o=>o.value===d)&&sel.value!==d){ sel.value=d; paintMap(); } };   // グラフの点をタップ → その日で地図を塗る
+  svg.addEventListener('click',pick); svg.addEventListener('touchend',pick);
   svg.addEventListener('mouseleave',()=>{tip.style.display='none';svg.querySelector('#hl')?.setAttribute('visibility','hidden');}); })();
 
 // ---------- summary ----------
@@ -1008,12 +1086,14 @@ async function loadVisible(){
         for(const pid in by) pkg.series[pid]=[...by[pid].values()].sort((x,y)=>x[0]<y[0]?-1:1); }
       else for(const pid in n.p){ pkg.series[pid]=n.dates.map((d,i)=>{ const v=n.p[pid][i]; return v?[d,v[0],Math.min(1,v[1]/(full[pid]||v[1]||1))]:null; }).filter(Boolean); }
       pkg.parcels.features.push(...g.features); geoLayer.addData(g); dataVer++;
+      for(const f of g.features) if(parcels[f.properties.pid]) parcels[f.properties.pid].cell=c.id;
     }catch(e){ loadedCells.delete(c.id); console.error(c.id,e); }
   }));
   loading--; hint.classList.add('hidden');
   allDates=[...new Set(Object.values(pkg.series).flat().map(r=>r[0]))].sort();
   const keep=document.getElementById('colorDate').value;
   detectOutliers(); buildColorDates(); if(keep&&allDates.includes(keep)) document.getElementById('colorDate').value=keep; refresh();
+  if(fillMode()!=='avg') buildPxDates();
 }
 function parseHash(){ const o={}; for(const kv of location.hash.replace(/^#/,'').split('&')){ const [k,v]=kv.split('='); if(!k) continue; if(k==='c'){const a=v.split(',').map(Number); if(a.length===2&&a.every(isFinite)) o.c=a;} else if(k==='z') o.z=+v; else if(k==='sel') o.sel=decodeURIComponent(v); } return o; }
 function writeHash(){ const c=map.getCenter(); const parts=[`c=${c.lat.toFixed(5)},${c.lng.toFixed(5)}`,`z=${map.getZoom()}`]; if(selected.length) parts.push('sel='+encodeURIComponent(selected.map(s=>s.pid).join(','))); history.replaceState(null,'','#'+parts.join('&')); }

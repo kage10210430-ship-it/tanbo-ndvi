@@ -4,3 +4,5 @@ pyogrio>=0.10
 shapely>=2.0
 pyyaml>=6
 requests>=2.31
+pillow>=10
+numpy>=1.24
