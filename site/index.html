@@ -868,8 +868,8 @@ function radarOn(){ return document.getElementById('radarOn').checked; }
 function radarSpike(s,i){ if(i<=0||i>=s.length-1) return false; const pv=s[i-1],nx=s[i+1],tD=Date.parse(s[i][0]);
   if(tD-Date.parse(pv[0])>15*864e5||Date.parse(nx[0])-tD>15*864e5) return false; const a=s[i][1]-pv[1], b=s[i][1]-nx[1];
   return (a>=0.2&&b>=0.2)||(a<=-0.2&&b<=-0.2); }
-function radarFit(n){ // 範囲ごとに、晴れた日の NDVI（有効画素率70%以上）と前後1日以内のレーダー RVI の組から直線で換算式を作る（5/10〜7/31）
-  if(!n.rdates||!n.rp) return null; const inW=d=>d.slice(5)>='05-10'&&d.slice(5)<='07-31', sh=(d,o)=>new Date(Date.parse(d)+o*864e5).toISOString().slice(0,10);
+function radarFit(n){ // 範囲ごとに、晴れた日の NDVI（有効画素率70%以上）と前後1日以内のレーダー VH（dB）の組から直線で換算式を作る（5/10〜7/31）
+  if(!n.rdates||!n.rp||n.rmask!=='s1-vhdb') return null; const inW=d=>d.slice(5)>='05-10'&&d.slice(5)<='07-31', sh=(d,o)=>new Date(Date.parse(d)+o*864e5).toISOString().slice(0,10);
   const xs=[],ys=[];
   for(const pid in n.rp){ const a=n.p[pid]; if(!a) continue; const m=new Map(); for(let k=0;k<a.length;k+=3) if(a[k+2]>=70&&inW(n.dates[a[k]])) m.set(n.dates[a[k]],a[k+1]/1000);
     const r=n.rp[pid]; for(let k=0;k<r.length;k+=3){ const d=n.rdates[r[k]]; if(!inW(d)) continue; for(const o of [0,-1,1]){ const dd=sh(d,o); if(m.has(dd)){ xs.push(r[k+1]/1000); ys.push(m.get(dd)); break; } } } }
