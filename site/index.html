@@ -768,6 +768,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
         <label>近隣の半径 <input type="number" id="nbR" min="100" max="2000" step="100" value="500" style="width:72px">m</label></div>
       <div class="ctl"><label><input type="checkbox" id="dipOn" checked>1区画だけ一時的に落ち込んだ観測（雲・かすみ）を除く</label></div>
       <div class="ctl"><label><input type="checkbox" id="lsOn" checked>前後の Sentinel-2 と0.15以上違う Landsat の点を除く</label></div>
+      <div class="ctl"><label><input type="checkbox" id="radarOn" checked>レーダー（Sentinel-1）から推定した点を表示（5/10〜7/31）</label></div>
       <div class="excl" id="excl"></div>
       <div class="ctl"><select id="addExcl"></select><button class="btn small" id="btnAddExcl">この日を除外</button></div>
     </details>
@@ -854,12 +855,29 @@ function isDip(s,i){ // one parcel only: lower than both neighbours (each within
 }
 // filtered rows per parcel, cached; rebuilt when threshold / excluded days / dip or Landsat filter / data change
 let clean=new Map(), cleanKey='', dataVer=0;
-function syncClean(){ const k=`${thr()}|${dipOn()}|${lsCheckOn()}|${[...excluded].sort().join()}|${dataVer}`; if(k!==cleanKey){ clean=new Map(); cleanKey=k; } }
+function syncClean(){ const k=`${thr()}|${dipOn()}|${lsCheckOn()}|${radarOn()}|${[...excluded].sort().join()}|${dataVer}`; if(k!==cleanKey){ clean=new Map(); cleanKey=k; } }
 function cleanOf(pid){ let c=clean.get(pid); if(c) return c;
   const t=thr()-1e-9, dip=dipOn(); let s=(pkg.series[pid]||[]).filter(r=>r[2]>=t&&!excluded.has(r[0]));
   if(lsCheckOn()&&s.some(r=>r[3]==='L')){ const s2=s.filter(r=>r[3]!=='L').map(r=>[Date.parse(r[0]),r[1]]); s=s.filter(r=>r[3]!=='L'||lsFits(s2,Date.parse(r[0]),r[1])); }
-  const rows=s.filter((r,i)=>!(dip&&isDip(s,i))); c={rows,by:new Map(rows.map(r=>[r[0],r[1]]))}; clean.set(pid,c); return c; }
-function seriesOf(pid){ return cleanOf(pid).rows.map(r=>({date:r[0],t:Date.parse(r[0]+'T00:00:00Z'),ndvi:r[1],ls:r[3]==='L'})); }
+  const opt=s.filter((r,i)=>!(dip&&isDip(s,i))), by=new Map(opt.map(r=>[r[0],r[1]]));
+  let rows=opt, rad=(pkg.radar||{})[pid];
+  if(radarOn()&&rad&&rad.length){ // レーダーの推定値は光の観測がない日だけ足す。前後のレーダーより急に上下した点（ノイズ）は除く
+    const rs=rad.filter(r=>r[2]>=t&&!by.has(r[0])); rows=opt.concat(rs.filter((r,i)=>!radarSpike(rs,i))).sort((a,b)=>a[0]<b[0]?-1:1); }
+  c={rows,by}; clean.set(pid,c); return c; }   // by（地図の色・近隣平均に使う値）は光の観測だけ
+function radarOn(){ return document.getElementById('radarOn').checked; }
+function radarSpike(s,i){ if(i<=0||i>=s.length-1) return false; const pv=s[i-1],nx=s[i+1],tD=Date.parse(s[i][0]);
+  if(tD-Date.parse(pv[0])>15*864e5||Date.parse(nx[0])-tD>15*864e5) return false; const a=s[i][1]-pv[1], b=s[i][1]-nx[1];
+  return (a>=0.2&&b>=0.2)||(a<=-0.2&&b<=-0.2); }
+function radarFit(n){ // 範囲ごとに、晴れた日の NDVI（有効画素率70%以上）と前後1日以内のレーダー RVI の組から直線で換算式を作る（5/10〜7/31）
+  if(!n.rdates||!n.rp) return null; const inW=d=>d.slice(5)>='05-10'&&d.slice(5)<='07-31', sh=(d,o)=>new Date(Date.parse(d)+o*864e5).toISOString().slice(0,10);
+  const xs=[],ys=[];
+  for(const pid in n.rp){ const a=n.p[pid]; if(!a) continue; const m=new Map(); for(let k=0;k<a.length;k+=3) if(a[k+2]>=70&&inW(n.dates[a[k]])) m.set(n.dates[a[k]],a[k+1]/1000);
+    const r=n.rp[pid]; for(let k=0;k<r.length;k+=3){ const d=n.rdates[r[k]]; if(!inW(d)) continue; for(const o of [0,-1,1]){ const dd=sh(d,o); if(m.has(dd)){ xs.push(r[k+1]/1000); ys.push(m.get(dd)); break; } } } }
+  const N=xs.length; if(N<50) return null; const mx=xs.reduce((a,b)=>a+b,0)/N, my=ys.reduce((a,b)=>a+b,0)/N; let sxy=0,sxx=0,syy=0;
+  for(let i=0;i<N;i++){ const dx=xs[i]-mx, dy=ys[i]-my; sxy+=dx*dy; sxx+=dx*dx; syy+=dy*dy; }
+  const b=sxy/sxx, r=sxy/Math.sqrt(sxx*syy); if(!(r>=0.6&&b>0)) return null;   // 関係が弱い範囲ではレーダーを使わない
+  return {a:my-b*mx,b,r,n:N}; }
+function seriesOf(pid){ return cleanOf(pid).rows.map(r=>({date:r[0],t:Date.parse(r[0]+'T00:00:00Z'),ndvi:r[1],ls:r[3]==='L',rad:r[3]==='R'})); }
 function val(pid,d){ const v=cleanOf(pid).by.get(d); return v===undefined?null:v; }
 function detectOutliers(){
   autoFlag={}; excluded=new Set(); const t=thr(); const byDate={};
@@ -894,7 +912,7 @@ document.getElementById('btnClear').onclick=()=>{selected=[];refresh();};
 function buildColorDates(){
   const sel=document.getElementById('colorDate'); sel.innerHTML=''; syncClean();
   const n=Object.keys(parcels).length, cnt={};
-  for(const p in parcels) for(const r of cleanOf(p).rows) cnt[r[0]]=(cnt[r[0]]||0)+1;
+  for(const p in parcels) for(const d of cleanOf(p).by.keys()) cnt[d]=(cnt[d]||0)+1;
   const cov=allDates.map(d=>({d,c:cnt[d]||0})).filter(x=>x.c>0);
   for(const x of cov.slice().reverse()){ const o=document.createElement('option'); o.value=x.d; o.textContent=`${x.d}（雲なし${Math.round(x.c/n*100)}%）`; sel.appendChild(o); }
   const good=cov.filter(x=>x.c/n>=0.5); sel.value=good.length?good[good.length-1].d:(cov.length?cov[cov.length-1].d:'');
@@ -1018,10 +1036,12 @@ function drawChart(){
   g+=`<line x1="${ML}" x2="${W-MR}" y1="${Y(0)}" y2="${Y(0)}" stroke="#4c5a52"/>`;
   hoverPts=[];
   for(const s of series){ if(!s.pts.length) continue; g+=`<path d="${s.pts.map((p,i)=>`${i?'L':'M'}${X(p.x).toFixed(1)},${Y(p.ndvi).toFixed(1)}`).join('')}" fill="none" stroke="${s.color}" stroke-width="2" stroke-dasharray="${s.dash}" stroke-linejoin="round"/>`;
-    for(const p of s.pts){ g+=p.ls?`<circle cx="${X(p.x).toFixed(1)}" cy="${Y(p.ndvi).toFixed(1)}" r="3" fill="#fff" stroke="${s.color}" stroke-width="1.6"/>`:`<circle cx="${X(p.x).toFixed(1)}" cy="${Y(p.ndvi).toFixed(1)}" r="2.8" fill="${s.color}"/>`; hoverPts.push({px:X(p.x),x:p.x,s,p}); } }
+    for(const p of s.pts){ const cx=X(p.x).toFixed(1), cy=Y(p.ndvi).toFixed(1);
+      g+=p.rad?`<path d="M${cx},${cy-3.8}l3.8,3.8l-3.8,3.8l-3.8,-3.8z" fill="#fff" stroke="${s.color}" stroke-width="1.4"/>`:p.ls?`<circle cx="${X(p.x).toFixed(1)}" cy="${Y(p.ndvi).toFixed(1)}" r="3" fill="#fff" stroke="${s.color}" stroke-width="1.6"/>`:`<circle cx="${X(p.x).toFixed(1)}" cy="${Y(p.ndvi).toFixed(1)}" r="2.8" fill="${s.color}"/>`; hoverPts.push({px:X(p.x),x:p.x,s,p}); } }
   g+=`<line id="hl" x1="0" x2="0" y1="${MT}" y2="${H-MB}" stroke="#1e3a2f" stroke-dasharray="3 3" visibility="hidden"/>`;
   // legend inside svg (so PNG includes it)
   let lx=ML, ly=H-MB+34; for(const s of series){ const w=s.label.length*13.5+36; if(lx+w>W-MR){lx=ML;ly+=20;} g+=`<line x1="${lx}" x2="${lx+18}" y1="${ly-5}" y2="${ly-5}" stroke="${s.color}" stroke-width="2.5" stroke-dasharray="${s.dash}"/><text x="${lx+22}" y="${ly}" font-size="14" fill="#1e3a2f">${s.label}</text>`; lx+=w; }
+  if(series.some(s=>s.pts.some(p=>p.rad))){ ly+=20; g+=`<path d="M${ML+9},${ly-9}l4,4l-4,4l-4,-4z" fill="#fff" stroke="#4c5a52" stroke-width="1.4"/><text x="${ML+22}" y="${ly}" font-size="13" fill="#4c5a52">ひし形はレーダー（Sentinel-1）からの推定</text>`; }
   if(series.some(s=>s.pts.some(p=>p.ls))){ ly+=20; g+=`<circle cx="${ML+9}" cy="${ly-5}" r="3.5" fill="#fff" stroke="#4c5a52" stroke-width="1.6"/><text x="${ML+22}" y="${ly}" font-size="13" fill="#4c5a52">白抜きの点は Landsat（30m画素）</text>`; }
   svg.setAttribute('viewBox',`0 0 ${W} ${ly+8}`); svg.innerHTML=g;
   document.getElementById('note').textContent=`除外 ${excluded.size}日 / 有効画素率 ${Math.round(thr()*100)}%以上`;
@@ -1033,7 +1053,7 @@ let lastPick=null;
     if(!best||best.d>25){lastPick=null;tip.style.display='none';svg.querySelector('#hl')?.setAttribute('visibility','hidden');return;}
     lastPick=best.h.p.date;
     const rows=hoverPts.filter(h=>Math.abs(h.x-best.h.x)<1e-6).sort((a,b)=>b.p.ndvi-a.p.ndvi); const mode=document.getElementById('mode').value;
-    tip.innerHTML=`<b>${mode==='dat'?'移植後'+Math.round(best.h.x)+'日（'+best.h.p.date+'）':best.h.p.date}</b>`+rows.map(h=>`<div class="r"><span><i style="background:${h.s.color}"></i>${h.s.label}${h.p.ls?'（Landsat）':''}</span><span>${h.p.ndvi.toFixed(2)}</span></div>`).join('');
+    tip.innerHTML=`<b>${mode==='dat'?'移植後'+Math.round(best.h.x)+'日（'+best.h.p.date+'）':best.h.p.date}</b>`+rows.map(h=>`<div class="r"><span><i style="background:${h.s.color}"></i>${h.s.label}${h.p.ls?'（Landsat）':h.p.rad?'（レーダー推定）':''}</span><span>${h.p.ndvi.toFixed(2)}</span></div>`).join('');
     tip.style.display='block'; const hl=svg.querySelector('#hl'); hl.setAttribute('x1',best.h.px); hl.setAttribute('x2',best.h.px); hl.setAttribute('visibility','visible');
     const px=best.h.px*r.width/W; tip.style.left=(px+14+tip.offsetWidth>r.width?px-tip.offsetWidth-14:px+14)+'px'; tip.style.top=Math.max(0,(pt.clientY-r.top)-20)+'px'; };
   svg.addEventListener('mousemove',onMove); svg.addEventListener('touchstart',onMove,{passive:false}); svg.addEventListener('touchmove',onMove,{passive:false});
@@ -1046,7 +1066,7 @@ function renderSummary(){
   const t=document.getElementById('sum'); if(!selected.length){t.innerHTML='';return;}
   const nb=document.getElementById('nbOn').checked?neighborSeries():null;
   t.innerHTML='<tr><th>田んぼ</th><th class="num">直近</th><th>日付</th><th class="num">今年の最大</th><th>日付</th>'+(nb&&nb.n?'<th class="num">近隣との差(直近)</th>':'')+'</tr>'+selected.map(s=>{
-    const ser=seriesOf(s.pid); const last=ser[ser.length-1]; const y=allDates.length?allDates[allDates.length-1].slice(0,4):''; const yr=ser.filter(p=>p.date.startsWith(y)); const mx=yr.length?yr.reduce((a,b)=>b.ndvi>a.ndvi?b:a):null;
+    const ser=seriesOf(s.pid).filter(p=>!p.rad); const last=ser[ser.length-1]; const y=allDates.length?allDates[allDates.length-1].slice(0,4):''; const yr=ser.filter(p=>p.date.startsWith(y)); const mx=yr.length?yr.reduce((a,b)=>b.ndvi>a.ndvi?b:a):null;
     let nbd=''; if(nb&&nb.n&&last){ const q=nb.pts.find(p=>p.date===last.date); nbd=q?`<td class="num" style="color:${last.ndvi-q.ndvi>=0?'var(--accent)':'var(--warn)'}">${(last.ndvi-q.ndvi>=0?'+':'')+(last.ndvi-q.ndvi).toFixed(2)}</td>`:'<td class="num">—</td>'; }
     return `<tr><td><i style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${s.color};margin-right:6px"></i>${parcels[s.pid].name}</td><td class="num">${last?last.ndvi.toFixed(2):'—'}</td><td>${last?fmtD(last.date):''}</td><td class="num">${mx?mx.ndvi.toFixed(2):'—'}</td><td>${mx?fmtD(mx.date):''}</td>${nbd}</tr>`; }).join('');
 }
@@ -1062,7 +1082,7 @@ function buildExcl(){
 }
 document.getElementById('btnAddExcl').onclick=()=>{const d=document.getElementById('addExcl').value; if(d){excluded.add(d); refresh();}};
 document.getElementById('thr').onchange=()=>{detectOutliers(); buildColorDates(); refresh();};
-document.getElementById('dipOn').onchange=refresh; document.getElementById('lsOn').onchange=refresh;
+document.getElementById('dipOn').onchange=refresh; document.getElementById('lsOn').onchange=refresh; document.getElementById('radarOn').onchange=refresh;
 document.getElementById('nbR').onchange=refresh; document.getElementById('nbOn').onchange=refresh;
 document.getElementById('mode').onchange=refresh; document.getElementById('tp').onchange=refresh;
 
@@ -1079,7 +1099,7 @@ const DATA='data/'; let index=null; const loadedCells=new Set(); let loading=0;
 const MIN_ZOOM=13;
 async function boot(){
   try{ index=await (await fetch(DATA+'index.json',{cache:'no-cache'})).json(); }catch(e){ setStatus('data/index.json が読めません。配信先の設定を確認してください。'); return; }
-  pkg={meta:{name:'',source:index.source||'Sentinel-2 L2A',attribution:'Contains modified Copernicus Sentinel data'},parcels:{type:'FeatureCollection',features:[]},series:{}};
+  pkg={meta:{name:'',source:index.source||'Sentinel-2 L2A',attribution:'Contains modified Copernicus Sentinel data'},parcels:{type:'FeatureCollection',features:[]},series:{},radar:{}};
   geoLayer=L.geoJSON([], {style:()=>({color:'#fff',weight:1,opacity:.8,fillColor:'#888',fillOpacity:.35}),
     onEachFeature:(f,l)=>{ const pid=String(f.properties.pid); parcels[pid]={feature:f,layer:l,centroid:centroid(f.geometry),name:f.properties.name||pid.slice(0,8),crop:''};
       l.on('click',()=>toggleSelect(pid)); l.bindTooltip(()=>tipText(pid),{sticky:true,direction:'top'}); } }).addTo(map);
@@ -1106,6 +1126,9 @@ async function loadVisible(){
       if(n.v===2){ // [添字, NDVI×1000, 有効画素率%] の並び。Landsat（ldates/lp）は同じ日に Sentinel-2 がなければ使う
         const by={}, put=(dates,p,src)=>{ for(const pid in p||{}){ const a=p[pid], m=by[pid]||(by[pid]=new Map()); for(let k=0;k<a.length;k+=3){ const d=dates[a[k]]; if(!m.has(d)) m.set(d,[d,a[k+1]/1000,a[k+2]/100,src]); } } };
         put(n.dates,n.p,'S'); put(n.ldates,n.lp,'L');
+        const fit=radarFit(n);   // レーダーは範囲ごとの換算式で推定 NDVI にする（5/10〜7/31 だけ）
+        if(fit) for(const pid in n.rp){ const a=n.rp[pid], rows=[]; for(let k=0;k<a.length;k+=3){ const d=n.rdates[a[k]], md=d.slice(5); if(md<'05-10'||md>'07-31') continue;
+          rows.push([d,Math.max(-0.1,Math.min(1,fit.a+fit.b*a[k+1]/1000)),a[k+2]/100,'R']); } pkg.radar[pid]=rows.sort((x,y)=>x[0]<y[0]?-1:1); }
         for(const pid in by) pkg.series[pid]=[...by[pid].values()].sort((x,y)=>x[0]<y[0]?-1:1); }
       else for(const pid in n.p){ pkg.series[pid]=n.dates.map((d,i)=>{ const v=n.p[pid][i]; return v?[d,v[0],Math.min(1,v[1]/(full[pid]||v[1]||1))]:null; }).filter(Boolean); }
       pkg.parcels.features.push(...g.features); geoLayer.addData(g); dataVer++;
