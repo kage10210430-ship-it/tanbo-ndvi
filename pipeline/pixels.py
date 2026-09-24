@@ -60,11 +60,11 @@ class GEEPixels:
         """{date: uint8 配列（0=雲, 1〜255=NDVI）}"""
         import numpy as np
         ee = self.ee
-        col = self.b._col_s2(bbox, dates[0], (dt.date.fromisoformat(dates[-1]) + dt.timedelta(days=1)).isoformat())
+        col = self.b._col(bbox, dates[0], (dt.date.fromisoformat(dates[-1]) + dt.timedelta(days=1)).isoformat(), "s2")
         out = {}
         for i in range(0, len(dates), BANDS_PER_CALL):
             chunk = dates[i:i + BANDS_PER_CALL]
-            imgs = [col.filterDate(d, ee.Date(d).advance(1, "day")).mosaic().select("NDVI")
+            imgs = [self.b.day(col, d).select("NDVI")
                     .clamp(-0.2, 1.0).add(0.2).divide(1.2).multiply(254).add(1).round().unmask(0).byte()
                     .rename("d" + d.replace("-", "")) for d in chunk]
             arr = with_retry(lambda: ee.data.computePixels(self._req(ee.Image.cat(imgs), g)))
@@ -90,6 +90,42 @@ def write_png(png_p, arrays):
     Image.fromarray(np.vstack(arrays), mode="L").save(buf, format="PNG", optimize=True)
     with open(png_p, "wb") as f:
         f.write(buf.getvalue())
+
+
+def drop_dates(cdir, dates):
+    """あとから画像が届いた日を画素データから消す（次の update_cell で取り直す）"""
+    drop = set(dates)
+    for f in os.listdir(cdir):
+        if not (f.startswith("px_") and f.endswith(".json") and f[3:7].isdigit()):
+            continue
+        meta_p = os.path.join(cdir, f); png_p = meta_p[:-5] + ".png"
+        meta = read_json(meta_p) or {}
+        if not drop & (set(meta.get("src_dates", [])) | set(meta.get("dates", []))):
+            continue
+        layers = read_layers(png_p, meta)
+        kept = [d for d in meta.get("dates", []) if d not in drop]
+        if kept:
+            write_png(png_p, [layers[d] for d in kept])
+        elif os.path.exists(png_p):
+            os.remove(png_p)
+        meta.update({"dates": kept, "src_dates": [d for d in meta.get("src_dates", []) if d not in drop], "done": False})
+        write_json(meta_p, meta)
+
+
+def cached_paddy(src, cdir, fc, g):
+    """田の画素（0/1）。区画と格子が同じなら前回のものを使う（GEE の呼び出しを減らす）"""
+    import numpy as np
+    from PIL import Image
+    import hashlib, json
+    geo = hashlib.sha1(json.dumps([f["geometry"] for f in fc["features"]], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    key = {"w": g["w"], "h": g["h"], "x0": g["x0"], "y1": g["y1"], "n": len(fc["features"]), "geo": geo}   # 区画の形が変わったら作り直す
+    mp, jp = os.path.join(cdir, "px_mask.png"), os.path.join(cdir, "px_mask.json")
+    if read_json(jp) == key and os.path.exists(mp):
+        return (np.asarray(Image.open(mp).convert("L")) > 0).astype(np.uint8)
+    a = src.paddy(fc, g)
+    Image.fromarray(a * 255, mode="L").save(mp, format="PNG", optimize=True)
+    write_json(jp, key)
+    return a
 
 
 def update_cell(src, cfg, data_dir, cell, today, mask, log):
@@ -121,7 +157,7 @@ def update_cell(src, cfg, data_dir, cell, today, mask, log):
         layers = read_layers(png_p, meta) if meta else {}
         if new:
             if paddy is None:
-                paddy = src.paddy(fc, g)
+                paddy = cached_paddy(src, cdir, fc, g)
             n_paddy = max(1, int(paddy.sum()))
             for d, a in src.ndvi(cell["bbox"], new, g).items():
                 a = a * paddy
