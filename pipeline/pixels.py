@@ -1,11 +1,11 @@
 """圃場内マップ用の画素データ（10m画素ごとの NDVI）を作る。
 
-各セル・各年について、期間（config の pixel_window, 既定 5/15〜9/25）の Sentinel-2 の晴れた日を
+各セル・各年について、期間（config の pixel_window, 既定 5/10〜9/30）の Sentinel-2 の晴れた日を
 1枚の PNG（グレースケール）に縦に積んで cells/<id>/px_<年>.png に保存する。
   画素値 0 = 雲・田以外、1〜255 = NDVI（-0.2〜1.0 を 1〜255 に割り当て）
 座標は Web メルカトル（EPSG:3857）で、地図にそのまま重ねられる。
 説明は cells/<id>/px_<年>.json:
-  {"v":1, "mask":"<雲判定の方式>", "dates":[PNGに入っている日], "src_dates":[確認済みの日],
+  {"v":1, "mask":"<雲判定の方式>", "window":[期間の始め, 終わり], "dates":[PNGに入っている日], "src_dates":[確認済みの日],
    "w":幅, "h":1日分の高さ, "x0":左端, "y1":上端, "px":画素の大きさ(3857のm), "done":期間が終わって確定したか}
 対象は今年と昨年（今年の期間がまだ始まっていなければ昨年と一昨年）。それより古い年のファイルは消す。
 """
@@ -32,7 +32,7 @@ def grid_for(bbox):
 
 def windows(cfg, today):
     """[(年, 期間の始め, 期間の終わり), ...]"""
-    (sm, sd), (em, ed) = [map(int, x.split("-")) for x in cfg.get("pixel_window", ["05-15", "09-25"])]
+    (sm, sd), (em, ed) = [map(int, x.split("-")) for x in cfg.get("pixel_window", ["05-10", "09-30"])]
     y = today.year if today >= dt.date(today.year, sm, sd) else today.year - 1
     return [(yy, dt.date(yy, sm, sd), dt.date(yy, em, ed)) for yy in (y - 1, y)]
 
@@ -109,13 +109,14 @@ def update_cell(src, cfg, data_dir, cell, today, mask, log):
         meta = read_json(meta_p) or {}
         if meta.get("mask") != mask or any(meta.get(k) != g[k] for k in g):
             meta = {}                                  # 方式か格子が変わったら作り直し
-        if meta.get("done"):
-            continue
+        win = [ws.isoformat(), we.isoformat()]
+        if meta.get("done") and meta.get("window") == win:
+            continue                                   # 期間を広げたときは、確定済みでも足りない日だけ取る
         new = [d for d in dates if d not in set(meta.get("src_dates", []))]
         done = today > we + dt.timedelta(days=20)
         if not new and meta:
-            if done:
-                meta["done"] = True; write_json(meta_p, meta)
+            if done != meta.get("done") or meta.get("window") != win:
+                meta.update({"done": done, "window": win}); write_json(meta_p, meta)
             continue
         layers = read_layers(png_p, meta) if meta else {}
         if new:
@@ -132,7 +133,7 @@ def update_cell(src, cfg, data_dir, cell, today, mask, log):
         elif os.path.exists(png_p):
             os.remove(png_p)
         write_json(meta_p, {"v": 1, "mask": mask, "dates": kept, "src_dates": sorted(set(meta.get("src_dates", [])) | set(new)),
-                            **g, "done": done and set(dates) <= set(meta.get("src_dates", [])) | set(new)})
+                            **g, "window": win, "done": done and set(dates) <= set(meta.get("src_dates", [])) | set(new)})
         added += len(new)
         log(f"{cell['id']}: 圃場内マップ {year} +{len(new)}日（保存 {len(kept)}日）")
     for f in os.listdir(cdir):                        # 対象外になった年のファイルは消す
