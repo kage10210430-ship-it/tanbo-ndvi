@@ -736,7 +736,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
     <div class="maphint" id="maphint">地図を拡大すると区画が表示されます</div>
     <div class="mapbar">
       <div class="ctl" style="margin:0"><span>色の日付</span><select id="colorDate"></select><label><input type="checkbox" id="colorOn" checked>区画を色分け</label></div>
-      <div class="ctl" style="margin:4px 0 0"><span>塗り方</span><select id="fillMode"><option value="avg">区画の平均</option><option value="abs">圃場内（絶対）</option><option value="rel">圃場内（相対）</option></select><span class="pxnote" id="pxNote"></span></div>
+      <div class="ctl" style="margin:4px 0 0"><span>塗り方</span><select id="fillMode"><option value="abs" selected>絶対表示</option><option value="rel">相対表示</option><option value="avg">平均表示</option></select><span class="pxnote" id="pxNote"></span></div>
       <div class="bar" id="lgBar"></div><div class="lbl" id="lgLbl"><span>低い 0.2</span><span>NDVI</span><span>0.9 高い</span></div>
     </div>
   </div>
@@ -924,8 +924,10 @@ function buildColorDates(){
   const n=Object.keys(parcels).length, cnt={};
   for(const p in parcels) for(const d of cleanOf(p).by.keys()) cnt[d]=(cnt[d]||0)+1;
   const cov=allDates.map(d=>({d,c:cnt[d]||0})).filter(x=>x.c>0);
-  for(const x of cov.slice().reverse()){ const o=document.createElement('option'); o.value=x.d; o.textContent=`${x.d}（雲なし${Math.round(x.c/n*100)}%）`; sel.appendChild(o); }
-  const good=cov.filter(x=>x.c/n>=0.5); sel.value=good.length?good[good.length-1].d:(cov.length?cov[cov.length-1].d:'');
+  // 読み込んでいる田んぼの半分以上に値がある日だけ並べる（ほとんど雲の日は出さない）。そういう日が1つもなければ全部
+  const good=cov.filter(x=>x.c/n>=0.5), list=good.length?good:cov;
+  for(const x of list.slice().reverse()){ const o=document.createElement('option'); o.value=x.d; o.textContent=x.d; sel.appendChild(o); }
+  sel.value=list.length?list[list.length-1].d:'';
 }
 function paintMap(){
   const d=document.getElementById('colorDate').value, on=document.getElementById('colorOn').checked;
@@ -1004,7 +1006,7 @@ async function buildPxDates(){   // 圃場内モードでは、選んだ田ん�
   const Y=allDates.length?+allDates[allDates.length-1].slice(0,4):new Date().getFullYear(), ds=new Set();
   for(const s of selected){ const c=parcels[s.pid]?.cell; if(!c) continue; for(const y of [Y-1,Y]){ const r=await pxLoad(c,y); if(r) r.m.dates.forEach(x=>{ if(!excluded.has(x)) ds.add(x); }); } }   // もやの日（除外している日）は出さない
   const list=[...ds].sort().reverse(); if(!list.length){ buildColorDates(); paintMap(); return; }
-  sel.innerHTML=''; for(const x of list){ const o=document.createElement('option'); o.value=x; o.textContent=`${x}（圃場内あり）`; sel.appendChild(o); }
+  sel.innerHTML=''; for(const x of list){ const o=document.createElement('option'); o.value=x; o.textContent=x; sel.appendChild(o); }
   sel.value=list.includes(keep)?keep:list[0]; paintMap();
 }
 document.getElementById('fillMode').onchange=buildPxDates;
@@ -1153,7 +1155,7 @@ async function loadVisible(){
   loading--; hint.classList.add('hidden');
   allDates=[...new Set(Object.values(pkg.series).flat().map(r=>r[0]))].sort();
   const keep=document.getElementById('colorDate').value;
-  detectOutliers(); buildColorDates(); if(keep&&allDates.includes(keep)) document.getElementById('colorDate').value=keep; refresh();
+  detectOutliers(); buildColorDates(); const cd=document.getElementById('colorDate'); if(keep&&[...cd.options].some(o=>o.value===keep)) cd.value=keep; refresh();
   if(fillMode()!=='avg') buildPxDates();
 }
 function parseHash(){ const o={}; for(const kv of location.hash.replace(/^#/,'').split('&')){ const [k,v]=kv.split('='); if(!k) continue; if(k==='c'){const a=v.split(',').map(Number); if(a.length===2&&a.every(isFinite)) o.c=a;} else if(k==='z') o.z=+v; else if(k==='sel') o.sel=decodeURIComponent(v); } return o; }
