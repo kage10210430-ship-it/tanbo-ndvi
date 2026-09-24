@@ -950,7 +950,7 @@ async function renderPx(){
     const sp=drawPx(s.pid,r,k,mode); if(sp){ ok++; spans.push(sp); P.layer.setStyle({fillOpacity:0}); P.layer._stk=''; } else cloud++; }
   if(mode==='rel'&&spans.length){ const f=x=>Math.round(x*100); const a=f(Math.min(...spans)), b=f(Math.max(...spans));
     lbl.innerHTML=`<span>平均より低い −${a===b?a:a+'〜'+b}%</span><span>${spans.length>1?'田ごとに自動':'この田の中の差'}</span><span>+${a===b?a:a+'〜'+b}% 高い</span>`; }
-  note.textContent=''+(miss?`この日の画素なし ${miss}枚（5/15〜9/25の晴れた日だけ）`:'')+(cloud?`${miss?' / ':''}雲で見えない ${cloud}枚`:'');
+  note.textContent=''+(miss?`この日の画素なし ${miss}枚（5/10〜9/30の晴れた日だけ）`:'')+(cloud?`${miss?' / ':''}雲で見えない ${cloud}枚`:'');
 }
 async function buildPxDates(){   // 圃場内モードでは、選んだ田んぼの画素がある日だけを並べる
   const sel=document.getElementById('colorDate'), keep=sel.value;
