@@ -37,7 +37,9 @@ VERSION = 1
 DEV = 0.3                 # 保存する差の範囲（±NDVI）
 MIN_PARCEL_CLEAR = 0.8    # その日に区画の画素のこれ以上が晴れていれば使う
 MIN_CELL_CLEAR = 0.2      # セルの範囲でこれ未満しか晴れていない日は画素を取らない
-EDGE_PX = 0.8             # 区画の縁からこの画素数（≒8m）以内の画素は使わない（畦・道路が混ざって毎年低く出るため。表示では内側の値でうめる）
+EDGE_PX = (0.8, 0.4)      # 区画の縁からこの画素数（≒8m）以内の画素は使わない（畦・道路が混ざって毎年低く出るため。表示では内側の値でうめる）。
+                          # 小さい田で MIN_INNER_PX 画素も残らないときは、縁を4mだけ除く
+MIN_INNER_PX = 8
 DEFAULT_WINDOWS = {"e": ["06-01", "07-05"], "l": ["07-20", "08-20"]}
 
 
@@ -124,9 +126,10 @@ class FakeTrend:
         return out
 
 
-def labels(parcels, g, edge=EDGE_PX):
+def labels(parcels, g, edges=EDGE_PX):
     """区画の番号を塗った格子（0=区画の外・縁, k=parcels の k 番目（1から））。
-    画素の中心が、区画を edge 画素だけ内側に縮めた形の中にあるかで決める（縮めないときは表示側 drawPx と同じ判定）"""
+    画素の中心が、区画を edges[0] 画素だけ内側に縮めた形の中にあるかで決める（MIN_INNER_PX 画素も残らなければ次の幅で）。
+    edges=(0,) なら縮めない（表示側 drawPx と同じ判定）"""
     import numpy as np, shapely
     from shapely.geometry import shape
     lab = np.zeros((g["h"], g["w"]), np.int32)
@@ -134,19 +137,25 @@ def labels(parcels, g, edge=EDGE_PX):
         x = 6378137.0 * np.radians(xy[:, 0]); y = 6378137.0 * np.log(np.tan(np.pi / 4 + np.radians(xy[:, 1]) / 2))
         return np.column_stack([(x - g["x0"]) / g["px"], (g["y1"] - y) / g["px"]])
     for k, f in enumerate(parcels["features"], 1):
-        gg = shapely.transform(shape(f["geometry"]), to_grid)
-        if edge:
-            gg = gg.buffer(-edge)
-        if gg.is_empty:
+        try:                                         # 形がこわれた区画があっても、そのセル全体を止めない
+            poly = shapely.transform(shape(f["geometry"]), to_grid)
+            for i, edge in enumerate(edges):
+                gg = poly.buffer(-edge) if edge else poly.buffer(0)
+                if gg.is_empty:
+                    continue
+                x0, y0, x1, y1 = gg.bounds
+                c0, c1 = max(0, math.floor(x0)), min(g["w"], math.ceil(x1))
+                r0, r1 = max(0, math.floor(y0)), min(g["h"], math.ceil(y1))
+                if c1 <= c0 or r1 <= r0:
+                    continue
+                xs, ys = np.meshgrid(np.arange(c0, c1) + 0.5, np.arange(r0, r1) + 0.5)
+                sub = lab[r0:r1, c0:c1]
+                hit = shapely.contains_xy(gg, xs, ys) & (sub == 0)
+                if hit.sum() >= MIN_INNER_PX or i == len(edges) - 1:
+                    sub[hit] = k
+                    break
+        except Exception:
             continue
-        x0, y0, x1, y1 = gg.bounds
-        c0, c1 = max(0, math.floor(x0)), min(g["w"], math.ceil(x1))
-        r0, r1 = max(0, math.floor(y0)), min(g["h"], math.ceil(y1))
-        if c1 <= c0 or r1 <= r0:
-            continue
-        xs, ys = np.meshgrid(np.arange(c0, c1) + 0.5, np.arange(r0, r1) + 0.5)
-        sub = lab[r0:r1, c0:c1]
-        sub[shapely.contains_xy(gg, xs, ys) & (sub == 0)] = k
     return lab
 
 
