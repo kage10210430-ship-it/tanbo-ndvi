@@ -46,7 +46,7 @@ DEFAULT_WINDOWS = {"e": ["06-01", "07-05"], "l": ["07-20", "08-20"]}
 def trend_years(cfg, today):
     """作る年の一覧（8月末を過ぎた年まで）"""
     last = today.year if today >= dt.date(today.year, 9, 1) else today.year - 1
-    return list(range(int(cfg.get("trend_from", 2019)), last + 1))
+    return list(range(int(cfg.get("trend_from", 2022)), last + 1))
 
 
 def windows(cfg):
