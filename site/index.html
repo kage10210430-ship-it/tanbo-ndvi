@@ -736,7 +736,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
     <div class="maphint" id="maphint">地図を拡大すると区画が表示されます</div>
     <div class="mapbar">
       <div class="ctl" style="margin:0"><span id="dateCtl" style="display:inline-flex;gap:6px;align-items:center"><span>色の日付</span><select id="colorDate"></select></span><label><input type="checkbox" id="colorOn" checked>区画を色分け</label></div>
-      <div class="ctl" style="margin:4px 0 0"><span>塗り方</span><select id="fillMode"><option value="abs" selected>絶対表示</option><option value="rel">相対表示</option><option value="avg">平均表示</option><option value="trend">生育傾向マップ</option></select><span class="pxnote" id="pxNote"></span></div>
+      <div class="ctl" style="margin:4px 0 0"><span>塗り方</span><select id="fillMode"><option value="abs" selected>絶対表示</option><option value="rel">相対表示</option><option value="trend">生育傾向マップ</option></select><span class="pxnote" id="pxNote"></span></div>
       <div class="bar" id="lgBar"></div><div class="lbl" id="lgLbl"><span>低い 0.2</span><span>NDVI</span><span>0.9 高い</span></div>
     </div>
   </div>
@@ -910,7 +910,7 @@ function neighborSeries(){ // mean over neighbors of all selected
 }
 
 // ---------- selection ----------
-function toggleSelect(pid){ setTimeout(()=>{ if(fillMode()!=='avg') buildPxDates(); },0);
+function toggleSelect(pid){ setTimeout(buildPxDates,0);
   const i=selected.findIndex(s=>s.pid===pid);
   if(i>=0) selected.splice(i,1);
   else { if(selected.length>=MAX_SEL){ setStatus(`選べるのは${MAX_SEL}枚までです。チップの×で外してから選んでください。`); return; } const used=selected.map(s=>s.color); selected.push({pid,color:PALETTE.find(c=>!used.includes(c))||PALETTE[0]}); setStatus(''); }
@@ -1061,7 +1061,7 @@ async function renderPx(){
   bar.classList.toggle('rel',mode==='rel'||isTrend(mode));
   lbl.innerHTML=mode==='rel'?'<span>その田の平均より低い</span><span>田の中の差</span><span>高い</span>':isTrend(mode)?'<span>生育弱傾向</span><span>稲の年の傾向</span><span>生育良傾向</span>':'<span>低い 0.2</span><span>NDVI</span><span>0.9 高い</span>';
   pxLayer.clearLayers();
-  if(mode==='avg'||!on){ note.textContent=''; return; }
+  if(!on){ note.textContent=''; return; }
   if(!selected.length){ note.textContent=isTrend(mode)?'田んぼを選ぶと、その中の生育の傾向（稲の年だけを重ねたもの）を色分けします':'田んぼを選ぶと、その中を10m画素で色分けします'; return; }
   if(isTrend(mode)) return renderTrend(gen,mode,note,lbl);
   const d=document.getElementById('colorDate').value; let ok=0,miss=0,cloud=0; const spans=[]; note.textContent='読み込み中…';
@@ -1077,7 +1077,7 @@ async function buildPxDates(){   // 圃場内モードでは、選んだ田ん�
   const sel=document.getElementById('colorDate'), keep=sel.value;
   document.getElementById('dateCtl').style.display=isTrend(fillMode())?'none':'inline-flex';
   if(isTrend(fillMode())){ paintMap(); return; }
-  if(fillMode()==='avg'||!selected.length){ buildColorDates(); if([...sel.options].some(o=>o.value===keep)) sel.value=keep; paintMap(); return; }
+  if(!selected.length){ buildColorDates(); if([...sel.options].some(o=>o.value===keep)) sel.value=keep; paintMap(); return; }
   const Y=allDates.length?+allDates[allDates.length-1].slice(0,4):new Date().getFullYear(), ds=new Set();
   for(const s of selected){ const c=parcels[s.pid]?.cell; if(!c) continue; for(const y of [Y-1,Y]){ const r=await pxLoad(c,y); if(r) r.m.dates.forEach(x=>{ if(!excluded.has(x)) ds.add(x); }); } }   // もやの日（除外している日）は出さない
   const list=[...ds].sort().reverse(); if(!list.length){ buildColorDates(); paintMap(); return; }
@@ -1166,11 +1166,11 @@ function buildExcl(){
   const list=[...new Set([...excluded,...Object.keys(autoFlag)])].sort();
   if(!list.length) box.innerHTML='<span class="hint">除外している日はありません</span>';
   for(const d of list){ const l=document.createElement('label'); l.innerHTML=`<input type="checkbox" ${excluded.has(d)?'checked':''}><span>${d}<br><span class="why">${autoFlag[d]?'自動: '+autoFlag[d]:'手動で除外'}</span></span>`;
-    l.querySelector('input').onchange=e=>{ if(e.target.checked) excluded.add(d); else excluded.delete(d); refresh(); if(fillMode()!=='avg') buildPxDates(); }; box.appendChild(l); }
+    l.querySelector('input').onchange=e=>{ if(e.target.checked) excluded.add(d); else excluded.delete(d); refresh(); buildPxDates(); }; box.appendChild(l); }
   const sel=document.getElementById('addExcl'); sel.innerHTML=''; for(const d of allDates){ if(excluded.has(d)) continue; const o=document.createElement('option'); o.value=d; o.textContent=d; sel.appendChild(o); }
 }
-document.getElementById('btnAddExcl').onclick=()=>{const d=document.getElementById('addExcl').value; if(d){excluded.add(d); refresh(); if(fillMode()!=='avg') buildPxDates();}};
-document.getElementById('thr').onchange=()=>{detectOutliers(); if(fillMode()==='avg') buildColorDates(); refresh(); if(fillMode()!=='avg') buildPxDates();};   // 圃場内モードでは画素がある日の一覧のまま
+document.getElementById('btnAddExcl').onclick=()=>{const d=document.getElementById('addExcl').value; if(d){excluded.add(d); refresh(); buildPxDates();}};
+document.getElementById('thr').onchange=()=>{detectOutliers(); refresh(); buildPxDates();};   // 圃場内モードでは画素がある日の一覧のまま
 document.getElementById('dipOn').onchange=refresh; document.getElementById('lsOn').onchange=refresh; document.getElementById('radarOn').onchange=refresh;
 document.getElementById('nbR').onchange=refresh; document.getElementById('nbOn').onchange=refresh;
 document.getElementById('mode').onchange=refresh; document.getElementById('tp').onchange=refresh;
@@ -1231,7 +1231,7 @@ async function loadVisible(){
   allDates=[...new Set(Object.values(pkg.series).flat().map(r=>r[0]))].sort();
   const keep=document.getElementById('colorDate').value;
   detectOutliers(); buildColorDates(); const cd=document.getElementById('colorDate'); if(keep&&[...cd.options].some(o=>o.value===keep)) cd.value=keep; refresh();
-  if(fillMode()!=='avg') buildPxDates();
+  buildPxDates();
 }
 function parseHash(){ const o={}; for(const kv of location.hash.replace(/^#/,'').split('&')){ const [k,v]=kv.split('='); if(!k) continue; if(k==='c'){const a=v.split(',').map(Number); if(a.length===2&&a.every(isFinite)) o.c=a;} else if(k==='z') o.z=+v; else if(k==='sel') o.sel=decodeURIComponent(v); } return o; }
 function writeHash(){ const c=map.getCenter(); const parts=[`c=${c.lat.toFixed(5)},${c.lng.toFixed(5)}`,`z=${map.getZoom()}`]; if(selected.length) parts.push('sel='+encodeURIComponent(selected.map(s=>s.pid).join(','))); history.replaceState(null,'','#'+parts.join('&')); }
