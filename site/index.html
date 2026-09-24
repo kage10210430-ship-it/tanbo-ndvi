@@ -893,7 +893,7 @@ document.getElementById('colorDate').onchange=paintMap; document.getElementById(
 // ---------- 圃場内マップ（10m画素） ----------
 // cells/<id>/px_<年>.png: 晴れた日を縦に積んだグレースケール（0=雲・田以外, 1〜255=NDVI -0.2〜1.0）。座標は EPSG:3857
 const pxLayer=L.layerGroup().addTo(map), pxCache={}; let pxGen=0;
-const REL=0.15;   // 相対表示の目盛り（平均との差 ±15%）
+const REL_MIN=0.02;   // 相対表示の目盛りの最低幅（平均との差 ±2%）。これより小さい差はノイズと区別しにくい
 function fillMode(){ return document.getElementById('fillMode').value; }
 function pxLoad(cell,year){ const key=cell+'|'+year;
   if(!(key in pxCache)) pxCache[key]=fetch(`${DATA}cells/${cell}/px_${year}.json`).then(r=>r.ok?r.json():null).then(async m=>{
@@ -914,39 +914,43 @@ function drawPx(pid,r,k,mode){
         r0=Math.max(0,Math.floor(Math.min(...all.map(p=>p[1])))-1), r1=Math.min(m.h,Math.ceil(Math.max(...all.map(p=>p[1])))+1);
   const cw=c1-c0, ch=r1-r0; if(cw<=0||ch<=0) return false;
   const inside=(x,y)=>rings.some(poly=>inRing(poly[0],x,y)&&!poly.slice(1).some(h=>inRing(h,x,y)));
-  const val=new Float32Array(cw*ch).fill(NaN); let nin=0,nok=0,sum=0;
-  for(let y=0;y<ch;y++) for(let x=0;x<cw;x++){ const v=g[(k*m.h+r0+y)*m.w+c0+x]; if(!inside(c0+x+.5,r0+y+.5)) continue; nin++; if(v>0){ const nd=(v-1)/254*1.2-0.2; val[y*cw+x]=nd; nok++; sum+=nd; } }
+  const val=new Float32Array(cw*ch).fill(NaN), oks=[]; let nin=0,nok=0,sum=0;
+  for(let y=0;y<ch;y++) for(let x=0;x<cw;x++){ const v=g[(k*m.h+r0+y)*m.w+c0+x]; if(!inside(c0+x+.5,r0+y+.5)) continue; nin++; if(v>0){ const nd=(v-1)/254*1.2-0.2; val[y*cw+x]=nd; nok++; sum+=nd; oks.push(nd); } }
   if(!nin||nok<nin*0.5) return false;                       // 半分以上が雲なら出さない
-  const mean=sum/nok;
+  const mean=sum/nok, base=Math.max(0.05,mean);
+  // 相対表示の目盛り: その田の中の差の大きさ（外れた5%を除く）に合わせる。最低 ±REL_MIN
+  const devs=oks.map(x=>Math.abs(x-mean)/base).sort((a,b)=>a-b), span=Math.max(REL_MIN,devs[Math.floor(0.95*(devs.length-1))]||0);
   for(let pass=0;pass<2;pass++){ const nv=val.slice();       // 雲・区画の外は周りの値でうめる（ぼかしで縁が薄くならないように）
     for(let y=0;y<ch;y++) for(let x=0;x<cw;x++){ if(!isNaN(val[y*cw+x])) continue; let s=0,n=0;
       for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++){ const yy=y+dy,xx=x+dx; if(yy<0||xx<0||yy>=ch||xx>=cw) continue; const w=val[yy*cw+xx]; if(!isNaN(w)){s+=w;n++;} }
       if(n) nv[y*cw+x]=s/n; }
     val.set(nv); }
   const A=document.createElement('canvas'); A.width=cw; A.height=ch; const ax=A.getContext('2d'), id=ax.createImageData(cw,ch);
-  for(let i=0;i<cw*ch;i++){ const v=isNaN(val[i])?mean:val[i]; const c=mode==='rel'?relColor((v-mean)/Math.max(0.05,mean)/REL):rgbOf(ndviColor(v)); id.data.set([...c,255],i*4); }
+  for(let i=0;i<cw*ch;i++){ const v=isNaN(val[i])?mean:val[i]; const c=mode==='rel'?relColor((v-mean)/base/span):rgbOf(ndviColor(v)); id.data.set([...c,255],i*4); }
   ax.putImageData(id,0,0);
   const S=Math.max(4,Math.min(12,Math.round(400/Math.max(cw,ch)))), B=document.createElement('canvas'); B.width=cw*S; B.height=ch*S;
   const bx=B.getContext('2d'); bx.beginPath(); for(const poly of rings) for(const ring of poly) ring.forEach(([x,y],i)=>bx[i?'lineTo':'moveTo']((x-c0)*S,(y-r0)*S));
   bx.clip('evenodd'); bx.imageSmoothingEnabled=true; bx.imageSmoothingQuality='high'; bx.drawImage(A,0,0,cw*S,ch*S);
   const ll=(c,rr)=>L.CRS.EPSG3857.unproject(L.point(m.x0+c*m.px,m.y1-rr*m.px));
   L.imageOverlay(B.toDataURL(),L.latLngBounds(ll(c0,r1),ll(c1,r0)),{pane:'pxPane',interactive:false}).addTo(pxLayer);
-  return true;
+  return mode==='rel'?span:1;
 }
 async function renderPx(){
   const gen=++pxGen, mode=fillMode(), on=document.getElementById('colorOn').checked, note=document.getElementById('pxNote');
   const bar=document.getElementById('lgBar'), lbl=document.getElementById('lgLbl');
   bar.classList.toggle('rel',mode==='rel');
-  lbl.innerHTML=mode==='rel'?`<span>平均より低い −${REL*100}%</span><span>田の中の差</span><span>+${REL*100}% 高い</span>`:'<span>低い 0.2</span><span>NDVI</span><span>0.9 高い</span>';
+  lbl.innerHTML=mode==='rel'?'<span>その田の平均より低い</span><span>田の中の差</span><span>高い</span>':'<span>低い 0.2</span><span>NDVI</span><span>0.9 高い</span>';
   pxLayer.clearLayers();
   if(mode==='avg'||!on){ note.textContent=''; return; }
   if(!selected.length){ note.textContent='田んぼを選ぶと、その中を10m画素で色分けします'; return; }
-  const d=document.getElementById('colorDate').value; let ok=0,miss=0,cloud=0; note.textContent='読み込み中…';
+  const d=document.getElementById('colorDate').value; let ok=0,miss=0,cloud=0; const spans=[]; note.textContent='読み込み中…';
   for(const s of selected){ const P=parcels[s.pid]; if(!P||!P.cell){ miss++; continue; }
     const r=await pxLoad(P.cell,d.slice(0,4)); if(gen!==pxGen) return;
     const k=r&&r.g?r.m.dates.indexOf(d):-1; if(k<0){ miss++; continue; }
-    if(drawPx(s.pid,r,k,mode)){ ok++; P.layer.setStyle({fillOpacity:0}); P.layer._stk=''; } else cloud++; }
-  note.textContent=(ok?'':'')+(miss?`この日の画素なし ${miss}枚（5/15〜9/25の晴れた日だけ）`:'')+(cloud?`${miss?' / ':''}雲で見えない ${cloud}枚`:'');
+    const sp=drawPx(s.pid,r,k,mode); if(sp){ ok++; spans.push(sp); P.layer.setStyle({fillOpacity:0}); P.layer._stk=''; } else cloud++; }
+  if(mode==='rel'&&spans.length){ const f=x=>Math.round(x*100); const a=f(Math.min(...spans)), b=f(Math.max(...spans));
+    lbl.innerHTML=`<span>平均より低い −${a===b?a:a+'〜'+b}%</span><span>${spans.length>1?'田ごとに自動':'この田の中の差'}</span><span>+${a===b?a:a+'〜'+b}% 高い</span>`; }
+  note.textContent=''+(miss?`この日の画素なし ${miss}枚（5/15〜9/25の晴れた日だけ）`:'')+(cloud?`${miss?' / ':''}雲で見えない ${cloud}枚`:'');
 }
 async function buildPxDates(){   // 圃場内モードでは、選んだ田んぼの画素がある日だけを並べる
   const sel=document.getElementById('colorDate'), keep=sel.value;
