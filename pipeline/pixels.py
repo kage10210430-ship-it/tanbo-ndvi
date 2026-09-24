@@ -64,7 +64,7 @@ class GEEPixels:
         out = {}
         for i in range(0, len(dates), BANDS_PER_CALL):
             chunk = dates[i:i + BANDS_PER_CALL]
-            imgs = [col.filterDate(d, ee.Date(d).advance(1, "day")).mosaic().select("NDVI")
+            imgs = [self.b.day(col, d).select("NDVI")
                     .clamp(-0.2, 1.0).add(0.2).divide(1.2).multiply(254).add(1).round().unmask(0).byte()
                     .rename("d" + d.replace("-", "")) for d in chunk]
             arr = with_retry(lambda: ee.data.computePixels(self._req(ee.Image.cat(imgs), g)))
@@ -116,7 +116,9 @@ def cached_paddy(src, cdir, fc, g):
     """田の画素（0/1）。区画と格子が同じなら前回のものを使う（GEE の呼び出しを減らす）"""
     import numpy as np
     from PIL import Image
-    key = {"w": g["w"], "h": g["h"], "x0": g["x0"], "y1": g["y1"], "n": len(fc["features"])}
+    import hashlib, json
+    geo = hashlib.sha1(json.dumps([f["geometry"] for f in fc["features"]], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    key = {"w": g["w"], "h": g["h"], "x0": g["x0"], "y1": g["y1"], "n": len(fc["features"]), "geo": geo}   # 区画の形が変わったら作り直す
     mp, jp = os.path.join(cdir, "px_mask.png"), os.path.join(cdir, "px_mask.json")
     if read_json(jp) == key and os.path.exists(mp):
         return (np.asarray(Image.open(mp).convert("L")) > 0).astype(np.uint8)

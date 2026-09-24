@@ -106,11 +106,18 @@ class GEEBackend:
         return (img.normalizedDifference(["B8", "B4"]).rename("NDVI").updateMask(ok)
                 .copyProperties(img, ["system:time_start"]))
 
+    def day(self, col, d):
+        """その日の画像を1枚に合成。画像が1枚もない日でも、全部マスクされた NDVI バンドを返す（エラーにしない）"""
+        ee = self.ee
+        base = ee.Image.constant(0).toFloat().rename("NDVI").updateMask(0)
+        return ee.ImageCollection([base]).merge(col.filterDate(d, ee.Date(d).advance(1, "day"))).mosaic()
+
     def images(self, bbox, start, end, src="s2"):
         """期間内の画像の一覧 [{id, t(ミリ秒), geom(写っている範囲 GeoJSON)}]。毎日の更新で新しい画像を探すのに使う"""
         ee = self.ee
         fc = self._raw(bbox, start, end, src).map(
-            lambda i: ee.Feature(i.geometry(), {"id": i.get("system:index"), "t": i.get("system:time_start")}))
+            # 写っている範囲は平面（経緯度の直線）で 10m 精度に細かくして返す。手元の shapely の判定と GEE の判定をそろえるため
+            lambda i: ee.Feature(i.geometry(10, "EPSG:4326", False), {"id": i.get("system:index"), "t": i.get("system:time_start")}))
         info = with_retry(lambda: fc.getInfo())
         return [{"id": f["properties"]["id"], "t": f["properties"]["t"], "geom": f["geometry"]} for f in info["features"]]
 
@@ -125,7 +132,7 @@ class GEEBackend:
         fc = ee.FeatureCollection(inner_fc_geojson)
         scale = SOURCES[src]["scale"]
         col = self._col(bbox, dates[0], (dt.date.fromisoformat(dates[-1]) + dt.timedelta(days=1)).isoformat(), src)
-        imgs = [col.filterDate(d, ee.Date(d).advance(1, "day")).mosaic().set("date", d) for d in dates]
+        imgs = [self.day(col, d).set("date", d) for d in dates]
         daily = ee.ImageCollection(imgs)
         reducer = ee.Reducer.mean().combine(ee.Reducer.count(), "", True)
         def per_img(img):
@@ -302,16 +309,15 @@ def process_cell(backend, cfg, data_dir, cell, start_default, end, log, plan=Non
         targeted = False                        # 計算し直し中のセルは全部調べる
     plan = plan or {}
     redone = 0
-    for src, pl in plan.items():                # あとから画像が届いた「仮」の日を消して、計算し直す
-        if src in sources(cfg) and SOURCES[src]["dates"] in nd:
-            redone += drop_dates(nd, src, pl.get("redo", ()))
-    if redone:
-        write_json(os.path.join(cdir, fname), nd)
     full = load_full(cdir)
     got = {}
     for src in sources(cfg):
         if targeted and src not in plan:
             continue
+        # あとから画像が届いた「仮」の日は消して計算し直す。消したことは計算結果と一緒に保存する
+        # （計算が失敗したら保存されないので、前の値が残る）
+        if SOURCES[src]["dates"] in nd:
+            redone += drop_dates(nd, src, plan.get(src, {}).get("redo", ()))
         got[src] = update_source(backend, cfg, cdir, fname, nd, cell, inner, full, src, start_default, end,
                                  only_dates=sorted(plan[src]["dates"]) if targeted else None)
     added = sum(got.values())
@@ -323,7 +329,8 @@ def process_cell(backend, cfg, data_dir, cell, start_default, end, log, plan=Non
         log(f"{cid}: 新しい雲判定で計算し直し完了 ({len(nd['dates'])}日, 区画{npar})")
     elif added:
         log(f"{cid}: " + ", ".join(f"{k} +{n}日" for k, n in got.items()) + f" (区画{npar})")
-    return cid, added
+    last = {src: max(nd[SOURCES[src]["dates"]]) for src in got if nd.get(SOURCES[src]["dates"])}
+    return cid, added, last
 
 
 def main():
@@ -358,6 +365,13 @@ def main():
     state = read_json(state_p, {}) or {}
     seen = state.setdefault("seen", {})          # {src: {画像ID: {date, t, first_seen}}}
     plans, found_all = find_new_images(backend, cfg, index, seen, today, end, now, log)
+    # 前回やり残したセル（時間切れ・エラー）の予定を足す。成功するまで毎回やり直す
+    for cid, pl in state.get("pending", {}).items():
+        for src, v in pl.items():
+            p = plans.setdefault(cid, {}).setdefault(src, {"dates": set(), "redo": set()})
+            p["dates"] |= set(v.get("dates", [])); p["redo"] |= set(v.get("redo", []))
+    px_pending = state.get("px_pending", {})       # 圃場内マップのやり残し {セルID: 作り直す日}
+    redo_full = set(state.get("pending_full", []))  # 全セルを調べる更新でやり残したセル（次回も全部調べる）
     jst_monday = (now + dt.timedelta(hours=9)).weekday() == 0
     full = args.full or not found_all or jst_monday
     log("全セルを調べる更新（週1回・初回・指定時）" if full else f"毎日の更新: 新しい画像があるセル {len(plans)}")
@@ -366,11 +380,12 @@ def main():
     if args.cells:
         want = set(args.cells.split(",")); cells = [c for c in cells if c["id"] in want]
     if not full:                                  # 新しい画像があるセルと、計算し直し中のセルだけ
-        cells = [c for c in cells if c["id"] in plans or cell_state(cfg, os.path.join(data_dir, "cells", c["id"]))[2].startswith(" ")]
-    # 更新が古いセルから処理（時間切れでも次回に続きができる）
-    cells = sorted(cells, key=lambda c: cell_state(cfg, os.path.join(data_dir, "cells", c["id"]))[2])
+        cells = [c for c in cells if c["id"] in plans or c["id"] in redo_full
+                 or cell_state(cfg, os.path.join(data_dir, "cells", c["id"]))[2].startswith(" ")]
+    # 新しい画像があるセルを先に、次に更新が古いセル（計算し直し中のセルが時間を使い切って、新しい画像が後回しにならないように）
+    cells = sorted(cells, key=lambda c: (c["id"] not in plans and c["id"] not in redo_full, cell_state(cfg, os.path.join(data_dir, "cells", c["id"]))[2]))
 
-    total = 0; done = 0
+    total = 0; done = 0; changed = False; ok_cells = set(); latest_new = {}
     with ThreadPoolExecutor(max_workers=args.workers) as ex:
         futs = {}
         # 時間予算を見ながら順次投入
@@ -379,18 +394,26 @@ def main():
             while pending and len(futs) < args.workers and (time.time() - t0) < args.max_minutes * 60:
                 c = pending.pop(0)
                 futs[ex.submit(process_cell, backend, cfg, data_dir, c, start_default, end, log,
-                               plans.get(c["id"]), not full)] = c["id"]
+                               plans.get(c["id"]), not full and c["id"] not in redo_full)] = c["id"]
             if not futs:
                 break
             for f in as_completed(list(futs)):
                 cid = futs.pop(f)
                 try:
-                    _, n = f.result(); total += n; done += 1
-                except Exception as e:      # 1セルの失敗で全体を止めない
+                    _, n, last = f.result(); total += n; done += 1; ok_cells.add(cid)
+                    changed = changed or n > 0 or any(v.get("redo") for v in plans.get(cid, {}).values())
+                    for s_, d_ in last.items():
+                        latest_new[s_] = max(latest_new.get(s_, ""), d_)
+                except Exception as e:      # 1セルの失敗で全体を止めない（予定は次回に持ち越す）
                     log(f"{cid}: エラー {e}")
                 break
             if (time.time() - t0) >= args.max_minutes * 60 and pending:
                 log(f"時間切れ。残り {len(pending)} セルは次回に続けます。"); pending = []
+    state["pending"] = {cid: {src: {"dates": sorted(v["dates"]), "redo": sorted(v["redo"])} for src, v in pl.items()}
+                        for cid, pl in plans.items() if cid not in ok_cells}
+    state["pending_full"] = sorted({c["id"] for c in cells if c["id"] not in ok_cells and (full or c["id"] in redo_full)})
+    if state["pending"] or state["pending_full"]:
+        log(f"やり残し {len(set(state['pending']) | set(state['pending_full']))} セルは次回に続けます")
     log(f"NDVI 完了: {done}セル処理, 観測日を合計 {total} 追加")
 
     # 圃場内マップ（10m画素）。NDVI のあとに残り時間で作る。途中で切れても次回に続きから。
@@ -400,43 +423,49 @@ def main():
         psrc = GEEPixels(backend); mid = mask_id(cfg)
         t1 = time.time(); limit = min(args.pixel_minutes * 60, 330 * 60 - (t1 - t0))
         cur = windows(cfg, today)[-1][0]
-        pcells = list(cells) if full else [c for c in cells if "s2" in plans.get(c["id"], {})]
-        for c in pcells:                          # あとから画像が届いた「仮」の日は画素も作り直す
-            redo = plans.get(c["id"], {}).get("s2", {}).get("redo")
-            if redo:
-                px_drop(os.path.join(data_dir, "cells", c["id"]), redo)
+        # 圃場内マップを作るセル: NDVI が成功したセル（毎日の更新では S2 の新しい画像があったセル）と、前回のやり残し
+        px_redo = {cid: set(v) for cid, v in px_pending.items()}
+        for cid in ok_cells:
+            r = plans.get(cid, {}).get("s2", {}).get("redo")
+            if r:
+                px_redo.setdefault(cid, set()).update(r)
+        pc_ids = {c["id"] for c in cells if c["id"] in ok_cells and (full or "s2" in plans.get(c["id"], {}))} | set(px_pending)
+        pcells = [c for c in index["cells"] if c["id"] in pc_ids]
+        def px_task(c):                           # あとから画像が届いた「仮」の日は、作る直前に画素も消して作り直す
+            if px_redo.get(c["id"]):
+                px_drop(os.path.join(data_dir, "cells", c["id"]), px_redo[c["id"]])
+            return update_cell(psrc, cfg, data_dir, c, today, mid, log)
         def px_key(c):          # 今年の分がまだないセルから
             m = read_json(os.path.join(data_dir, "cells", c["id"], f"px_{cur}.json")) or {}
             return (m.get("mask") == mid, max(m.get("src_dates") or [""]))
-        pcells = sorted(pcells, key=px_key); pdone = 0
+        pcells = sorted(pcells, key=px_key); pdone = 0; px_ok = set()
         with ThreadPoolExecutor(max_workers=args.workers) as ex:
             futs = {}; pending = list(pcells)
             while pending or futs:
                 while pending and len(futs) < args.workers and time.time() - t1 < limit:
                     c = pending.pop(0)
-                    futs[ex.submit(update_cell, psrc, cfg, data_dir, c, today, mid, log)] = c["id"]
+                    futs[ex.submit(px_task, c)] = c["id"]
                 if not futs:
                     break
                 for f in as_completed(list(futs)):
                     cid = futs.pop(f)
                     try:
-                        pdays += f.result(); pdone += 1
+                        pdays += f.result(); pdone += 1; px_ok.add(cid)
                     except Exception as e:
                         log(f"{cid}: 圃場内マップ エラー {e}")
                     break
                 if time.time() - t1 >= limit and pending:
                     log(f"圃場内マップ 時間切れ。残り {len(pending)} セルは次回に続けます。"); pending = []
+        state["px_pending"] = {cid: sorted(px_redo.get(cid, ())) for cid in pc_ids if cid not in px_ok}
         log(f"圃場内マップ 完了: {pdone}セル, 画素データを合計 {pdays} 日分取得")
 
     stamp = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     index["checked"] = stamp                       # 最後に新しい画像を確認した時刻
-    if total or pdays or "updated" not in index:
+    if changed or pdays or "updated" not in index:
         index["updated"] = stamp                   # データが変わった時刻
-    latest = index.setdefault("latest", {})        # 観測元ごとの最新の撮影日
-    for src, ids in seen.items():
-        ds = [v["date"] for v in ids.values()]
-        if ds:
-            latest[src] = max(latest.get(src, ""), max(ds))
+    latest = index.setdefault("latest", {})        # 観測元ごとの最新の撮影日（実際に計算したデータの中で）
+    for src, d in latest_new.items():
+        latest[src] = max(latest.get(src, ""), d)
     index["source"] = "Sentinel-2 L2A (Copernicus)" + (" + Landsat 8/9 (NASA HLS)" if cfg.get("landsat") else "") + (" + Sentinel-1" if cfg.get("radar") else "") + " / Google Earth Engine"
     write_json(os.path.join(data_dir, "index.json"), index)
     write_json(state_p, state)

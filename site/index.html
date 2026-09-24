@@ -896,7 +896,7 @@ function detectOutliers(){
   }
   // 速報（最新の数日）はまだ次の観測がないので上の判定ができない。6〜7月に範囲ごとの中央値が前回より0.08以上下がったら「もやの疑い」
   provHaze=new Set(); if(!provFrom) return; const acc={};
-  for(const pid in pkg.series){ const cell=parcels[pid]?.cell; if(!cell) continue; const s=pkg.series[pid].filter(r=>r[2]>=t-1e-9&&r[3]!=='L');
+  for(const pid in pkg.series){ const cell=parcels[pid]?.cell; if(!cell) continue; const s=pkg.series[pid].filter(r=>r[2]>=t-1e-9&&r[3]!=='L'&&!excluded.has(r[0]));   // もやで除外した日は比べる相手にしない
     for(let i=1;i<s.length;i++){ const d=s[i][0], md=d.slice(5); if(d<provFrom||md<'06-01'||md>'07-31') continue; const pv=s[i-1];
       if(Date.parse(d)-Date.parse(pv[0])>20*864e5) continue; (acc[cell+'|'+d]=acc[cell+'|'+d]||[]).push(s[i][1]-pv[1]); } }
   for(const k in acc){ const v=acc[k].sort((a,b)=>a-b); if(v.length>=4&&v[Math.floor(v.length/2)]<=-0.08) provHaze.add(k); }
@@ -1092,11 +1092,11 @@ function buildExcl(){
   const list=[...new Set([...excluded,...Object.keys(autoFlag)])].sort();
   if(!list.length) box.innerHTML='<span class="hint">除外している日はありません</span>';
   for(const d of list){ const l=document.createElement('label'); l.innerHTML=`<input type="checkbox" ${excluded.has(d)?'checked':''}><span>${d}<br><span class="why">${autoFlag[d]?'自動: '+autoFlag[d]:'手動で除外'}</span></span>`;
-    l.querySelector('input').onchange=e=>{ if(e.target.checked) excluded.add(d); else excluded.delete(d); refresh(); }; box.appendChild(l); }
+    l.querySelector('input').onchange=e=>{ if(e.target.checked) excluded.add(d); else excluded.delete(d); refresh(); if(fillMode()!=='avg') buildPxDates(); }; box.appendChild(l); }
   const sel=document.getElementById('addExcl'); sel.innerHTML=''; for(const d of allDates){ if(excluded.has(d)) continue; const o=document.createElement('option'); o.value=d; o.textContent=d; sel.appendChild(o); }
 }
-document.getElementById('btnAddExcl').onclick=()=>{const d=document.getElementById('addExcl').value; if(d){excluded.add(d); refresh();}};
-document.getElementById('thr').onchange=()=>{detectOutliers(); buildColorDates(); refresh();};
+document.getElementById('btnAddExcl').onclick=()=>{const d=document.getElementById('addExcl').value; if(d){excluded.add(d); refresh(); if(fillMode()!=='avg') buildPxDates();}};
+document.getElementById('thr').onchange=()=>{detectOutliers(); if(fillMode()==='avg') buildColorDates(); refresh(); if(fillMode()!=='avg') buildPxDates();};   // 圃場内モードでは画素がある日の一覧のまま
 document.getElementById('dipOn').onchange=refresh; document.getElementById('lsOn').onchange=refresh; document.getElementById('radarOn').onchange=refresh;
 document.getElementById('nbR').onchange=refresh; document.getElementById('nbOn').onchange=refresh;
 document.getElementById('mode').onchange=refresh; document.getElementById('tp').onchange=refresh;
