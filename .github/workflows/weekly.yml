@@ -36,6 +36,7 @@ jobs:
       - name: 日本時間で今日走るか決める（5〜9月は毎日、それ以外は月曜だけ。手動実行はいつでも）
         id: gate
         run: |
+          echo "t0=$(date +%s)" >> "$GITHUB_OUTPUT"
           m=$(TZ=Asia/Tokyo date +%-m); w=$(TZ=Asia/Tokyo date +%u)
           if [ "${{ github.event_name }}" != "schedule" ] || { [ "$m" -ge 5 ] && [ "$m" -le 9 ]; } || [ "$w" = 1 ]; then
             echo "run=1" >> "$GITHUB_OUTPUT"
@@ -86,6 +87,26 @@ jobs:
           publish_dir: ./site
           force_orphan: true
           commit_message: 'update ndvi data'
+
+      # 生育傾向マップ（過去の年の作物の見分けと田の中の差）。NDVI を公開したあと、残り時間で作る。
+      # 最初は全セルで数日かかる（近いセルから順に。途中で切れても次回に続きから）。作った年があるときだけ公開し直す
+      - name: 生育傾向マップのデータを作る
+        id: trend
+        if: steps.gate.outputs.run == '1'
+        continue-on-error: true
+        env:
+          EE_SERVICE_ACCOUNT: ${{ secrets.EE_SERVICE_ACCOUNT }}
+          EE_PRIVATE_KEY: ${{ secrets.EE_PRIVATE_KEY }}
+          EE_PROJECT: ${{ secrets.EE_PROJECT }}
+        run: python pipeline/trend.py --deadline $(( ${{ steps.gate.outputs.t0 }} + 300 * 60 )) --workers 4
+
+      - uses: peaceiris/actions-gh-pages@v4
+        if: steps.gate.outputs.run == '1' && steps.trend.outputs.made != '' && steps.trend.outputs.made != '0'
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site
+          force_orphan: true
+          commit_message: 'update trend data'
 
       # GitHub は公開リポジトリで60日間動きがないと定期実行を止めるので、毎回「有効」にし直しておく
       # （手で「無効」にしたときは再び有効にしない。失敗してもジョブは止めず、警告として残す）
