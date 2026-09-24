@@ -18,7 +18,7 @@ ndvi.json の形式（v2）:
 --backend fake --fake-csv <file> を付けると GEE を使わずに CSV（pid,date,mean,count[,src]）から
 同じ形式を作る（動作確認用）。
 """
-import argparse, os, sys, json, time, datetime as dt
+import argparse, os, sys, json, time, math, datetime as dt
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from common import load_config, write_json, read_json, round_coords, with_retry
 
@@ -26,13 +26,13 @@ MAX_FEATURES_PER_CALL = 4500      # getInfo の要素数上限(5000)に余裕を
 MIN_PCT = 50                      # これ未満の有効画素率の観測は保存しない
 LOOKBACK_DAYS = 15                # 雲判定データの配信遅れに備えて、直近はもう一度確認する
 LANDSAT_MASK = "hlsl30-fmask"     # Landsat の雲判定の方式（変えると Landsat 分だけ計算し直す）
-RADAR_MASK = "s1-rvi"             # レーダーの指標（変えるとレーダー分だけ計算し直す）
+RADAR_MASK = "s1-vhdb"            # レーダーの指標（変えるとレーダー分だけ計算し直す）
 
 # 観測元ごとの設定: ndvi.json のキー、計算の画素サイズ、full（10m画素数）との比、直近の再確認日数
 SOURCES = {
     "s2": {"dates": "dates", "p": "p", "scale": 10, "div": 1, "lookback": LOOKBACK_DAYS},
     "ls": {"dates": "ldates", "p": "lp", "scale": 30, "div": 9, "lookback": 30},
-    # Sentinel-1 レーダー: RVI = 4·VH/(VV+VH)（線形）。梅雨の空白を埋めるため、各年の radar_window の間だけ計算する
+    # Sentinel-1 レーダー: VH の後方散乱（区画平均を dB に。保存は dB×1000）。梅雨の空白を埋めるため、各年の radar_window の間だけ計算する
     "s1": {"dates": "rdates", "p": "rp", "scale": 10, "div": 1, "lookback": 15},
 }
 
@@ -59,14 +59,13 @@ class GEEBackend:
         return {"ls": self._col_ls, "s1": self._col_s1}.get(src, self._col_s2)(bbox, start, end)
 
     def _col_s1(self, bbox, start, end):
-        """Sentinel-1 GRD（IW, VV+VH）。雲を通すので雲判定はない。値は RVI（0〜1、稲が茂るほど大きい）"""
+        """Sentinel-1 GRD（IW, VH あり）。雲を通すので雲判定はない。値は VH（線形。区画で平均してから dB にする）。
+        田植え直後の水面では低く（-25dB 前後）、稲が茂るほど高くなる。"""
         ee = self.ee
         def prep(img):
-            vv = ee.Image(10).pow(img.select("VV").divide(10)); vh = ee.Image(10).pow(img.select("VH").divide(10))
-            return vh.multiply(4).divide(vv.add(vh)).rename("NDVI").copyProperties(img, ["system:time_start"])
+            return ee.Image(10).pow(img.select("VH").divide(10)).rename("NDVI").copyProperties(img, ["system:time_start"])
         return (ee.ImageCollection("COPERNICUS/S1_GRD").filterBounds(ee.Geometry.Rectangle(bbox)).filterDate(start, end)
                 .filter(ee.Filter.eq("instrumentMode", "IW"))
-                .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VV"))
                 .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VH"))
                 .map(prep))
 
@@ -244,7 +243,8 @@ def update_source(backend, cfg, cdir, fname, nd, cell, inner, full, src, start_d
                 f = (full.get(pid) or 0) / S["div"] or v[1] or 1
                 pct = int(100 * min(1.0, v[1] / f) + 1e-6)   # 切り捨て（しきい値の判定を従来と同じにする）
                 if pct >= MIN_PCT:
-                    nd[kp].setdefault(pid, []).extend([di, round(v[0] * 1000), pct])
+                    val = 10 * math.log10(max(v[0], 1e-6)) if src == "s1" else v[0]   # レーダーは dB
+                    nd[kp].setdefault(pid, []).extend([di, round(val * 1000), pct])
             added += 1
         sort_dates(nd, src)
         # 途中で落ちても進捗を失わないよう都度保存
