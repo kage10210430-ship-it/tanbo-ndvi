@@ -997,6 +997,8 @@ function drawPx(pid,r,k,mode){
 // trend.json の p[pid][年] = [A, J, R, 6月ごろの日数, 6月ごろの田の中央値, 8月ごろの日数, 8月ごろの田の中央値]
 //   A = 4月の NDVI×1000（麦があると高い）, J = 7/10〜7/31 の NDVI×1000, R = 5/1〜6/10 のレーダー VH（dB×10。水を張ると低い）
 const RICE_R=-21, RICE_J=0.5, MUGI_A=0.6;   // 稲: 5〜6月に水が張ってあり（R が低い）、7月に育っている。麦: 4月に緑
+// 小さい田・遅い田植えではレーダーが −18〜−21dB に出ることが多い。6月ごろの育ちが稲と同じ（田の中央値 NDVI 0.6 未満＝一面の草地ではない）なら稲とみなす
+const RICE_R2=-18, RICE_JUNE_MAX=0.6;
 const TREND_MIN_YEARS=2;
 // 生育傾向スコア（画素ごと。その田の平均との差 %、稲の年の平均）
 //   年ごとに E=6月ごろ, L=8月ごろ の差をとり、後半に伸びた所（L≧E）は L、伸びなかった所は (E+L)/2 をその年の値にする
@@ -1014,9 +1016,9 @@ function trLoad(cell){
     return {m,g}; }).catch(()=>null);
   return trCache[cell]; }
 function cropOf(row){   // その年の作物（'稲' / '麦' / '他' / ''=わからない）
-  if(!row) return ''; const [A,J,R]=row;
-  if(R!=null&&J!=null&&R/10<=RICE_R&&J/1000>=RICE_J) return '稲';
+  if(!row) return ''; const [A,J,R,,me]=row;
   if(A!=null&&A/1000>=MUGI_A) return '麦';
+  if(R!=null&&J!=null&&J/1000>=RICE_J&&(R/10<=RICE_R||(R/10<=RICE_R2&&(me==null||me/1000<RICE_JUNE_MAX)))) return '稲';
   return A==null&&J==null&&R==null?'':'他';
 }
 function drawTrend(pid,r){   // 戻り値 {years: 重ねた稲の年, rice: 稲と見分けた年（画素がない年も）, mugi, other, known: 手がかりがある年の数, span: 目盛り（0なら描けなかった）}
