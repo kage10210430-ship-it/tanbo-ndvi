@@ -748,8 +748,8 @@ svg.leaflet-image-layer.leaflet-interactive path {
     <h2>推移</h2>
     <div class="ctl">
       <select id="mode">
-        <option value="date">今年（5/15〜9/25）</option>
-        <option value="doy">前年と重ねる（5/15〜9/25）</option>
+        <option value="date">今年（5/10〜9/30）</option>
+        <option value="doy">前年と重ねる（5/10〜9/30）</option>
         <option value="dat">移植後日数</option>
       </select>
       <label>移植日 <input type="date" id="tp"></label>
@@ -983,9 +983,9 @@ function drawChart(){
   let xmin,xmax; const series=[];
   const src=selected.map(s=>({label:parcels[s.pid].name,color:s.color,dash:'',pts:seriesOf(s.pid)}));
   if(document.getElementById('nbOn').checked&&selected.length){ const nb=neighborSeries(); if(nb.n) src.push({label:`近隣の田の平均（${nb.n}枚）`,color:'#8a8f8c',dash:'6 4',pts:nb.pts}); }
-  // 期間は 5/15〜9/25（今年＝最新の観測がある年）。前年と重ねるときは各年の 5/15 からの日数で並べる
-  const y0=new Date(now).getUTCFullYear(), SEAS=[[4,15],[8,25]], sStart=y=>Date.UTC(y,SEAS[0][0],SEAS[0][1]), sEnd=y=>Date.UTC(y,SEAS[1][0],SEAS[1][1]);
-  const seasonTicks=(off)=>[[sStart(y0),'5/15']].concat([5,6,7,8].map(m=>[Date.UTC(y0,m,1),`${m+1}月`]),[[sEnd(y0),'9/25']]).map(([t,l])=>[off(t),l]);
+  // 期間は 5/10〜9/30（今年＝最新の観測がある年）。前年と重ねるときは各年の 5/10 からの日数で並べる
+  const y0=new Date(now).getUTCFullYear(), SEAS=[[4,10],[8,30]], sStart=y=>Date.UTC(y,SEAS[0][0],SEAS[0][1]), sEnd=y=>Date.UTC(y,SEAS[1][0],SEAS[1][1]);
+  const seasonTicks=(off)=>[[sStart(y0),'5/10']].concat([5,6,7,8].map(m=>[Date.UTC(y0,m,1),`${m+1}月`]),[[sEnd(y0),'9/30']]).map(([t,l])=>[off(t),l]);
   if(mode==='date'){ xmin=sStart(y0); xmax=sEnd(y0);
     for(const s of src) series.push({...s,pts:s.pts.filter(p=>p.t>=xmin&&p.t<=xmax).map(p=>({x:p.t,...p}))}); }
   else if(mode==='doy'){ xmin=0; xmax=(sEnd(y0)-sStart(y0))/864e5;
