@@ -2,7 +2,10 @@ name: weekly-ndvi
 
 on:
   schedule:
-    - cron: '0 21 * * 0'        # 毎週月曜 6:00 JST（UTC 日曜 21:00）
+    # 5〜9月は毎日、それ以外は毎週月曜。どちらも 4:23 JST（UTC 前日 19:23。0分ちょうどは混み合って遅れやすい）
+    # 新しい画像がない日はすぐ終わる。月曜は全セルを調べ直す
+    - cron: '23 19 * 5-9 *'
+    - cron: '23 19 * 1-4,10-12 0'
   workflow_dispatch:
     inputs:
       rebuild_cells:
@@ -12,6 +15,10 @@ on:
       max_minutes:
         description: 'NDVI計算に使う時間の上限（分）'
         default: '300'
+      full:
+        description: '新しい画像の有無に関係なく全セルを調べる'
+        type: boolean
+        default: false
 
 concurrency:
   group: ndvi-update
@@ -23,6 +30,7 @@ jobs:
     timeout-minutes: 350
     permissions:
       contents: write
+      actions: write          # 定期実行が止まらないようにする（下の最後のステップ）
     steps:
       - uses: actions/checkout@v4
 
@@ -50,7 +58,7 @@ jobs:
           EE_SERVICE_ACCOUNT: ${{ secrets.EE_SERVICE_ACCOUNT }}
           EE_PRIVATE_KEY: ${{ secrets.EE_PRIVATE_KEY }}
           EE_PROJECT: ${{ secrets.EE_PROJECT }}
-        run: python pipeline/update_ndvi.py --max-minutes ${{ inputs.max_minutes || '300' }} --workers 4
+        run: python pipeline/update_ndvi.py --max-minutes ${{ inputs.max_minutes || '300' }} --workers 4 ${{ inputs.full && '--full' || '' }}
 
       - uses: peaceiris/actions-gh-pages@v4
         with:
@@ -58,3 +66,10 @@ jobs:
           publish_dir: ./site
           force_orphan: true
           commit_message: 'update ndvi data'
+
+      # GitHub は公開リポジトリで60日間動きがないと定期実行を止めるので、毎回「有効」にし直しておく
+      - name: 定期実行を有効のままにする
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow enable weekly.yml --repo "${{ github.repository }}" || true
