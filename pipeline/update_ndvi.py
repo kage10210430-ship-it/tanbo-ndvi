@@ -26,11 +26,14 @@ MAX_FEATURES_PER_CALL = 4500      # getInfo の要素数上限(5000)に余裕を
 MIN_PCT = 50                      # これ未満の有効画素率の観測は保存しない
 LOOKBACK_DAYS = 15                # 雲判定データの配信遅れに備えて、直近はもう一度確認する
 LANDSAT_MASK = "hlsl30-fmask"     # Landsat の雲判定の方式（変えると Landsat 分だけ計算し直す）
+RADAR_MASK = "s1-rvi"             # レーダーの指標（変えるとレーダー分だけ計算し直す）
 
 # 観測元ごとの設定: ndvi.json のキー、計算の画素サイズ、full（10m画素数）との比、直近の再確認日数
 SOURCES = {
     "s2": {"dates": "dates", "p": "p", "scale": 10, "div": 1, "lookback": LOOKBACK_DAYS},
     "ls": {"dates": "ldates", "p": "lp", "scale": 30, "div": 9, "lookback": 30},
+    # Sentinel-1 レーダー: RVI = 4·VH/(VV+VH)（線形）。梅雨の空白を埋めるため、各年の radar_window の間だけ計算する
+    "s1": {"dates": "rdates", "p": "rp", "scale": 10, "div": 1, "lookback": 15},
 }
 
 
@@ -53,7 +56,19 @@ class GEEBackend:
         self.cfg = cfg
 
     def _col(self, bbox, start, end, src="s2"):
-        return self._col_ls(bbox, start, end) if src == "ls" else self._col_s2(bbox, start, end)
+        return {"ls": self._col_ls, "s1": self._col_s1}.get(src, self._col_s2)(bbox, start, end)
+
+    def _col_s1(self, bbox, start, end):
+        """Sentinel-1 GRD（IW, VV+VH）。雲を通すので雲判定はない。値は RVI（0〜1、稲が茂るほど大きい）"""
+        ee = self.ee
+        def prep(img):
+            vv = ee.Image(10).pow(img.select("VV").divide(10)); vh = ee.Image(10).pow(img.select("VH").divide(10))
+            return vh.multiply(4).divide(vv.add(vh)).rename("NDVI").copyProperties(img, ["system:time_start"])
+        return (ee.ImageCollection("COPERNICUS/S1_GRD").filterBounds(ee.Geometry.Rectangle(bbox)).filterDate(start, end)
+                .filter(ee.Filter.eq("instrumentMode", "IW"))
+                .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VV"))
+                .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VH"))
+                .map(prep))
 
     def _col_ls(self, bbox, start, end):
         """Landsat 8/9（NASA HLS L30: Sentinel-2 に合わせて補正済み）。
@@ -155,7 +170,13 @@ def compact_parcels(cdir):
 
 
 def sources(cfg):
-    return ["s2", "ls"] if cfg.get("landsat") else ["s2"]
+    return ["s2"] + (["ls"] if cfg.get("landsat") else []) + (["s1"] if cfg.get("radar") else [])
+
+
+def in_window(cfg, d):
+    """レーダーを計算する時期（各年の radar_window、月-日）か"""
+    a, b = cfg.get("radar_window", ["05-01", "08-10"])
+    return a <= d[5:] <= b
 
 
 def cell_state(cfg, cdir):
@@ -172,7 +193,10 @@ def cell_state(cfg, cdir):
     lfresh = "ls" in sources(cfg) and nd.get("lmask") != LANDSAT_MASK
     if lfresh:                                   # Landsat は初回・方式変更時に全期間を計算
         nd.update({"lmask": LANDSAT_MASK, "ldates": [], "lp": {}})
-    fresh = fname == "ndvi_next.json" or lfresh
+    rfresh = "s1" in sources(cfg) and nd.get("rmask") != RADAR_MASK
+    if rfresh:                                   # レーダーも初回・方式変更時に全期間を計算
+        nd.update({"rmask": RADAR_MASK, "rdates": [], "rp": {}})
+    fresh = fname == "ndvi_next.json" or lfresh or rfresh
     return fname, nd, (" " if fresh else "") + (nd["dates"][-1] if nd["dates"] else "")   # 計算し直しのセルを先に
 
 
@@ -205,7 +229,7 @@ def update_source(backend, cfg, cdir, fname, nd, cell, inner, full, src, start_d
         nxt = (dt.date.fromisoformat(nd[kd][-1]) + dt.timedelta(days=1)).isoformat()
         back = (dt.date.fromisoformat(end) - dt.timedelta(days=S["lookback"])).isoformat()
         start = max(start_default, min(nxt, back))
-    dates = [d for d in backend.list_dates(cell["bbox"], start, end, src) if d not in have]
+    dates = [d for d in backend.list_dates(cell["bbox"], start, end, src) if d not in have and (src != "s1" or in_window(cfg, d))]
     added = 0
     per_call = max(1, MAX_FEATURES_PER_CALL // max(1, len(pids)))
     for i in range(0, len(dates), per_call):
@@ -330,7 +354,7 @@ def main():
         log(f"圃場内マップ 完了: {pdone}セル, 画素データを合計 {pdays} 日分取得")
 
     index["updated"] = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    index["source"] = "Sentinel-2 L2A (Copernicus)" + (" + Landsat 8/9 (NASA HLS)" if cfg.get("landsat") else "") + " / Google Earth Engine"
+    index["source"] = "Sentinel-2 L2A (Copernicus)" + (" + Landsat 8/9 (NASA HLS)" if cfg.get("landsat") else "") + (" + Sentinel-1" if cfg.get("radar") else "") + " / Google Earth Engine"
     write_json(os.path.join(data_dir, "index.json"), index)
     log(f"完了: {done}セル処理, 観測日を合計 {total} 追加")
 
