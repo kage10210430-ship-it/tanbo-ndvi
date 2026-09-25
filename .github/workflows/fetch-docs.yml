@@ -20,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: 道具
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils >/dev/null
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils tesseract-ocr tesseract-ocr-jpn >/dev/null
       - name: 取ってくる
         env:
           URLS: ${{ inputs.urls }}
@@ -32,7 +32,13 @@ jobs:
             i=$((i+1)); f=$(printf '%02d' $i)
             echo "=====DOC $f $u"
             if ! curl -sSL --max-time 120 -A 'Mozilla/5.0' -o $f.bin "$u"; then echo "失敗"; continue; fi
-            if head -c 5 $f.bin | grep -q '%PDF'; then pdftotext -layout $f.bin - | sed 's/[[:space:]]*$//' | grep -v '^$' | head -n 1500
+            if head -c 5 $f.bin | grep -q '%PDF'; then
+              pdftotext -layout $f.bin $f.txt || true
+              if [ "$(tr -d '[:space:][:digit:]' < $f.txt | wc -c)" -lt 300 ]; then   # 画像だけの PDF は文字を読み取る（はじめの8ページ）
+                echo "（画像の PDF なので OCR）"; pdftoppm -r 250 -l 8 -gray $f.bin $f.p
+                for g in $f.p*.pgm; do tesseract $g - -l jpn --psm 6 2>/dev/null; done > $f.txt
+              fi
+              sed 's/[[:space:]]*$//' $f.txt | grep -v '^$' | head -n 1500
             else python3 - "$f.bin" "$u" <<'PY'
           import sys, re, html
           from urllib.parse import urljoin
