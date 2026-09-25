@@ -4,11 +4,11 @@
 田の代表点（田の中の1点）がどの市町に入るかで決める。境界は変わらないので1回だけ作る。
 被害の数字は pipeline/wild_city.json（市町の資料から手で写したもの・出典つき）をそのまま入れる。
 
-data/city.json: {"v":1, "names":{"18201":"福井市",…}, "dmg":{…wild_city.json…},
+data/city.json: {"v":1, "names":{"18201":"福井市",…}, "paddy":{"18201": 田の面積 ha,…}, "dmg":{…wild_city.json…},
                  "cells":{"<cell>":["18201", {"18202":["pidの頭8文字",…]}]}}
   セルの中の田はふつう1つ目の市町。ほかの市町に入る田だけを2つ目に書く（pid の頭8文字。セルの中で重なるときは pid 全体）
 """
-import os, json
+import os, json, math
 from common import write_json, read_json, _download
 
 VERSION = 1
@@ -39,20 +39,22 @@ def build(cfg, data_dir, log=print):
     if not bounds:
         log("city: city_sources がないので作りません"); return 0
     index = read_json(os.path.join(data_dir, "index.json")) or {"cells": []}
-    cells, miss = {}, 0
+    cells, miss, paddy = {}, 0, {}
     for c in index["cells"]:
         pp = read_json(os.path.join(data_dir, "cells", c["id"], "parcels.geojson")) or {"features": []}
         got = {}
         for f in pp["features"]:
             pid = f["properties"]["pid"]
             try:
-                pt = shape(f["geometry"]).representative_point()
+                geom = shape(f["geometry"]); pt = geom.representative_point()
             except Exception:
                 continue
             code = next((k for k, _, _, pg in bounds if pg.contains(pt)), None)
             if code is None:      # 海岸・境界の線の上など: 一番近い市町
                 code = min(bounds, key=lambda b: b[2].distance(pt))[0]; miss += 1
             got.setdefault(code, []).append(pid)
+            k = math.cos(math.radians(pt.y))                    # 面積（ha）: 経緯度のまま測って m² に直す
+            paddy[code] = paddy.get(code, 0) + geom.area * 111320 * k * 110540 / 1e4
         if not got:
             continue
         main = max(got, key=lambda k: len(got[k]))
@@ -65,7 +67,8 @@ def build(cfg, data_dir, log=print):
         cells[c["id"]] = [main, short] if short else [main]
     dmg = read_json(os.path.join(HERE, "wild_city.json")) or {}
     write_json(os.path.join(data_dir, "city.json"), {"v": VERSION, "src": "国土数値情報 行政区域（N03）国土交通省",
-                                                      "names": {k: n for k, n, _, _ in bounds}, "dmg": dmg, "cells": cells})
+                                                      "names": {k: n for k, n, _, _ in bounds}, "paddy": {k: round(v) for k, v in sorted(paddy.items())},
+                                                      "dmg": dmg, "cells": cells})
     log(f"city: {len(cells)} セル（境界の外で一番近い市町にした田 {miss}）")
     return 1
 

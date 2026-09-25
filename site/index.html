@@ -1130,7 +1130,7 @@ function rankParts(pid,r,t,sh){   // t = drawTrend の結果, sh = shape.json �
 // 獣害の起きやすさ: cells/<id>/wild.json（ESA WorldCover の森と筆ポリゴンから）
 //   [f30, f100, f200, dirs, paddy] = 田の縁から 0〜30m・30〜100m・100〜200m の森の割合（%）, 200m以内に森がある方位（16方位のビット）, 周り300mの田の割合（%）
 //   近さ = 0.6×f30 + 0.4×f100（40% で満点。森にじかに接しているかを重く見る）, 囲まれ = 森がある方位の数（4方位から、12方位で満点）,
-//   孤立 = 周りの田 40%→0 〜 5%→1。危なさ R = 0.6×近さ + 0.25×囲まれ + 0.15×孤立（0〜1）→ R×20 点を引く
+//   孤立 = 周りの田 40%→0 〜 5%→1。危なさ R = 0.6×近さ + 0.25×囲まれ + 0.15×孤立（0〜1）→ 20 × R × 市町の倍率（下の cityOf）点を引く（20点まで）
 //   （県全体では 半分の田が2点以下、4枚に1枚が11点以上。平野の真ん中はほぼ0、谷あい・山すその田が大きい）
 const wildCache={};
 function wildLoad(cell){ if(!(cell in wildCache)) wildCache[cell]=fetch(`${DATA}cells/${cell}/wild.json`).then(r=>r.ok?r.json():null).catch(()=>null); return wildCache[cell]; }
@@ -1144,20 +1144,30 @@ function dirSpans(mask){   // 森がある方位のまとまり（例: 「北西
 // 田の市町: data/city.json（国土数値情報の行政区域から）。cells[セル] = [ふつうの市町, {ほかの市町: [pid の頭8文字 …]}]
 let cityP=null;
 function cityLoad(){ return cityP||(cityP=fetch(`${DATA}city.json`).then(r=>r.ok?r.json():null).catch(()=>null)); }
+// 市町の獣害の多さ（pipeline/wild_city.json）: 市町の被害防止計画の被害額を、同じ年の県全体の被害額に対する割合にし、
+//   田の面積の割合で割る（r = 田の面積あたりの被害が県平均の何倍か）。倍率 k = 0.6 + 0.8 × (0.5 + log2(r)/4)（0.6〜1.4, 県平均で1）
+//   いくつかの市町をまとめた計画（嶺南6市町）は、まとめた被害と、まとめた田の面積で。資料が見つからない市町は倍率1（県平均あつかい）
 async function cityOf(pid){
   const c=await cityLoad(), e=c&&c.cells&&c.cells[parcels[pid].cell]; if(!e) return null;
   let code=e[0]; for(const k in (e[1]||{})) if(e[1][k].some(x=>x===pid||x===pid.slice(0,8))) code=k;
-  return {code,name:c.names[code],dmg:c.dmg&&c.dmg[code]}; }
+  const out={code,name:c.names[code],k:1}, M=c.dmg&&c.dmg.m, P=c.dmg&&c.dmg.pref;
+  const key=M&&Object.keys(M).find(k=>k.split(',').includes(code)), d=key&&M[key], pref=d&&P&&P[d.y];
+  if(!d||!pref||!c.paddy) return out;
+  const tot=Object.values(c.paddy).reduce((a,b)=>a+b,0), codes=key.split(',');
+  out.share=d.yen/pref[0]; out.pshare=codes.reduce((a,k)=>a+(c.paddy[k]||0),0)/tot; if(!out.pshare) return out;
+  out.r=out.share/out.pshare; out.k=0.6+0.8*cl01(0.5+Math.log2(out.r)/4);
+  Object.assign(out,{d,pref,group:codes.length>1?codes.map(k=>c.names[k]):null}); return out; }
 async function wildRisk(pid){
   const [w,city]=await Promise.all([wildLoad(parcels[pid].cell),cityOf(pid)]), row=w&&w.p&&w.p[pid]; if(!row) return {ok:false,pen:0,city};
   const [f30,f100,f200,mask,pad]=row, ndir=[...Array(16).keys()].filter(k=>(mask>>k)&1).length;
   const near=cl01((0.6*f30+0.4*f100)/100/0.4), encl=cl01((ndir-3)/9), iso=cl01((40-pad)/35);
-  const R=cl01(0.6*near+0.25*encl+0.15*iso), pen=Math.round(20*R), sp=dirSpans(mask).slice(0,2).join('・'), t=[];
+  const R=cl01(0.6*near+0.25*encl+0.15*iso), k=city?city.k:1, pen=Math.round(20*cl01(R*k)), sp=dirSpans(mask).slice(0,2).join('・'), t=[];
   if(mask===0xffff) t.push(`四方を森に囲まれ（30m以内の森 ${f30}%）`);
   else { if(f30>=20) t.push(`${sp||'近く'}側が森に接し（30m以内の森 ${f30}%）`); else if(f100>=20) t.push(`${sp||'近く'}側100m以内に森があり`); else if(f200>=20) t.push(`${sp||'近く'}側200m以内に森があり`);
     if(ndir>=6) t.push(`森に${ndir}方位を囲まれ`); }
   if(pad<40) t.push(`周り300mの田は${pad}%と少なく`);
-  return {ok:true,pen,R,f30,f100,f200,ndir,pad,near,encl,iso,city,text:t.length?t.join('、')+'、獣害に注意です':''};
+  if(city&&city.r!=null&&R>=0.15&&city.r>=1.5) t.push(`${city.name}は田の広さのわりに獣害が多い市町で`);
+  return {ok:true,pen,R,k,f30,f100,f200,ndir,pad,near,encl,iso,city,text:t.length?t.join('、')+'、獣害に注意です':''};
 }
 function rankText(p,mt){
   const size=p.area>=10000?'大きい':p.area>=3000?'中くらいの':'小さめの';
@@ -1174,6 +1184,13 @@ function rankText(p,mt){
   if(mt&&mt.ok&&mt.pen>=3&&mt.text) ex.push([mt.pen/20+0.5,`${mt.text}（−${mt.pen}点）。`]);
   ex.sort((a,b)=>b[0]-a[0]); if(ex.length) L.push(ex[0][1]);
   return L; }
+function cityWhy(c){
+  if(!c) return '市町：不明（倍率 1.00）。';
+  if(c.r==null) return `市町：${c.name}（被害の数字が載った資料が見つからないので、倍率 1.00＝県平均あつかい）。`;
+  const pc=v=>(v*100).toFixed(v<0.1?1:0)+'%', who=c.group?`${c.group.join('・')}の合計`:'';
+  return `市町：${c.name}。${c.d.y}年度の被害 ${c.d.yen.toLocaleString()}千円（${c.group?who+'、':''}<a href="${c.d.url}" target="_blank" rel="noopener">${c.d.src}</a>${c.d.memo?`。${c.d.memo}`:''}）は
+    同じ年度の県全体（${c.pref[0].toLocaleString()}千円）の ${pc(c.share)}、田の面積は県の ${pc(c.pshare)}
+    → 田の広さあたりの被害は県平均の ${c.r.toFixed(2)}倍。倍率 = 0.6 + 0.8 ×（0.5 + log2(${c.r.toFixed(2)}) ÷ 4）= ${c.k.toFixed(2)}（0.6〜1.4）。`; }
 let rkTipFor=null, rkPinned=false;
 function rankTip(b,x,pin){   // ランクの札の説明（点数の内わけと、それぞれの計算のしかた）。pin = 押して出した（ほかを押すまで出しておく）
   let el=document.getElementById('rkTip'); if(!el){ el=document.createElement('div'); el.id='rkTip'; el.className='rktip'; document.body.appendChild(el);
@@ -1193,7 +1210,8 @@ function rankTip(b,x,pin){   // ランクの札の説明（点数の内わけと
   ${row('年ごとの安定',P.stab,10,p.sd==null?'稲の年が1回だけなので半分（5点）':`8月ごろの NDVI の年ごとのばらつき（標準偏差）が ${p.sd.toFixed(3)}。10 ×（0.08 − ばらつき）÷ 0.06：0.02以下で満点、0.08以上で0点`)}
   ${mt&&mt.ok?`<tr><td>獣害</td><td class="num"><b>−${pen}</b> / 20</td><td class="why">田の縁から 30m以内の森 ${mt.f30}%・30〜100m ${mt.f100}%、森がある方位 ${mt.ndir}/16、周り300mの田 ${mt.pad}%。
     近さ ${mt.near.toFixed(2)} =（0.6×30m以内 + 0.4×30〜100m）÷ 40%、囲まれ ${mt.encl.toFixed(2)} =（方位数 − 3）÷ 9、孤立 ${mt.iso.toFixed(2)} =（40% − 周りの田）÷ 35%（どれも 0〜1）。
-    20 ×（0.6×近さ + 0.25×囲まれ + 0.15×孤立）（森は ESA WorldCover 2021、10m）${mt.city?`<br>市町：${mt.city.name}`:''}</td></tr>`:`<tr><td>獣害</td><td class="num">−0</td><td class="why">手がかりの準備中のため減点なし</td></tr>`}
+    危なさ ${mt.R.toFixed(2)} = 0.6×近さ + 0.25×囲まれ + 0.15×孤立（森は ESA WorldCover 2021、10m）。<br>${cityWhy(mt.city)}
+    減点 = 20 × 危なさ × 市町の倍率 ${mt.k.toFixed(2)}（20点まで）</td></tr>`:`<tr><td>獣害</td><td class="num">−0</td><td class="why">手がかりの準備中のため減点なし</td></tr>`}
   </table><div class="why">ランクの区切り：${cut}（県全体の稲の田で S 8%・A 24%・B 43%・C 20%・D 5%）。NDVI は Sentinel-2 と Landsat、形は筆ポリゴン（農林水産省）から。</div>`;
   el.style.fontSize=Math.max(12,0.85*parseFloat(getComputedStyle(b.closest('.rankbox')).fontSize))+'px';
   el.style.maxHeight=''; el.style.display='block'; const r=b.getBoundingClientRect(), w=el.offsetWidth; let h=el.offsetHeight, left, top;
@@ -1211,7 +1229,7 @@ async function renderRanks(gen,items){   // items: [{pid,color,r,t}]
   const rows=items.map((it,i)=>({...it,p:rankParts(it.pid,it.r,it.t,shs[i]&&shs[i].p&&shs[i].p[it.pid])}));
   const draw=()=>{ box.innerHTML='<h2 style="margin:0 0 2px">圃場の評価</h2>'+rows.map((x,i)=>{ const sc=Math.round(x.p.base-(x.mt&&x.mt.pen||0)), rk=RANK_CUT.find(c=>sc>=c[0])[1];
     return `<div class="rk"><div class="bd rk-${rk}" data-i="${i}" tabindex="0" aria-label="ランク${rk}（くわしい点数）"><small>Rank</small><span>${rk}</span></div><div class="tx"><b style="color:${x.color}">${selLabel(x.pid)}</b>　<b>${sc}点</b><br>${rankText(x.p,x.mt).join('<br>')}${x.mt&&!x.mt.ok?'<br><span class="hint">（獣害の手がかりは準備中のため、減点していません）</span>':''}</div></div>`; }).join('')
-    +'<div class="hint">広さ30・生育のそろい20・形15・深い所の少なさ10・例年の旺盛さ15・年ごとの安定10（100点）。獣害の起きやすさ（森との近さ・森に囲まれ具合・周りの田の少なさ）で最大20点を引きます。ランクの札にマウスを重ねる（スマホは押す）と、点数のわけが出ます。</div>';
+    +'<div class="hint">広さ30・生育のそろい20・形15・深い所の少なさ10・例年の旺盛さ15・年ごとの安定10（100点）。獣害の起きやすさ（森との近さ・森に囲まれ具合・周りの田の少なさと、市町の被害の多さ）で最大20点を引きます。ランクの札にマウスを重ねる（スマホは押す）と、点数のわけが出ます。</div>';
     // マウスは重ねると出る（押すと出したままにする）。スマホは押すと出て、ほかを押すと消える
     box.querySelectorAll('.bd').forEach(b=>{ const x=rows[+b.dataset.i];
       b.onpointerenter=e=>{ if(e.pointerType==='mouse'&&rkTipFor!==b) rankTip(b,x,false); };
