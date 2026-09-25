@@ -1079,8 +1079,8 @@ function buildCurve(pid,r,h,y0){
   return {years:used,avg,cur};
 }
 // ---------- 圃場の評価（S〜D） ----------
-// 100点満点: 広さ35・生育のそろい25・深い所の少なさ10・例年の旺盛さ15・年ごとの安定15。山際（獣害の心配）は最大20点を引く
-// 区切りは県全体の稲の田（約12万枚）で S 5%・A 20%・B 50%・C 20%・D 5% になるように（山際の減点の前）
+// 100点満点: 広さ35・生育のそろい25・深い所の少なさ10・例年の旺盛さ15・年ごとの安定15。獣害の起きやすさで最大20点を引く
+// 区切りは県全体の稲の田（約12万枚）で S 5%・A 20%・B 50%・C 20%・D 5% になるように（獣害の減点の前）
 const RANK_CUT=[[80,'S','#b8860b'],[68,'A','#2e8b3a'],[46,'B','#1a73e8'],[28,'C','#e8710a'],[-1e9,'D','#d93025']];
 const cl01=x=>Math.max(0,Math.min(1,x));
 function polyArea(geom){ const ring=c=>{ const k=Math.cos(c[0][1]*Math.PI/180); let s=0; for(let i=0;i<c.length;i++){ const [x1,y1]=c[i],[x2,y2]=c[(i+1)%c.length]; s+=x1*y2-x2*y1; } return Math.abs(s)/2*111320*k*110540; };
@@ -1094,21 +1094,28 @@ function rankParts(pid,r,t){   // t = drawTrend の結果
   const pts={area:35*cl01(Math.log(Math.max(area,1)/500)/Math.log(20)), unif:25*cl01((0.15-t.spread)/0.13), deep:10*cl01(1-t.deep/0.4), vig:15*pct, stab:sd==null?7.5:15*cl01((0.08-sd)/0.06)};
   return {area,spread:t.spread,deep:t.deep,pct,sd,pts,base:Object.values(pts).reduce((a,b)=>a+b,0)};
 }
-// 山際: 国土地理院の標高タイル（10m）で、田の中心から 100〜500m の16方位の標高を見て、急に高くなる所が近いほど減点
-const demCache={};
-function demTile(x,y){ const k=x+'/'+y; if(!(k in demCache)) demCache[k]=new Promise(res=>{ const im=new Image(); im.crossOrigin='anonymous';
-  im.onload=()=>{ try{ const c=document.createElement('canvas'); c.width=256; c.height=256; const g=c.getContext('2d',{willReadFrequently:true}); g.drawImage(im,0,0); res(g.getImageData(0,0,256,256).data); }catch(e){ res(null); } };
-  im.onerror=()=>res(null); im.src=`${gsi}dem_png/14/${x}/${y}.png`; }); return demCache[k]; }
-async function demAt(lat,lon){ const z=14, n=2**z, fx=(lon+180)/360*n, fy=(1-Math.log(Math.tan(lat*Math.PI/180)+1/Math.cos(lat*Math.PI/180))/Math.PI)/2*n;
-  const d=await demTile(Math.floor(fx),Math.floor(fy)); if(!d) return undefined; const i=(Math.floor((fy%1)*256)*256+Math.floor((fx%1)*256))*4, v=d[i]*65536+d[i+1]*256+d[i+2];
-  return v===8388608?null:(v<8388608?v:v-16777216)*0.01; }   // null = 水面など標高なし
-async function mountainPenalty(pid){
-  const [lon,lat]=parcels[pid].centroid, h0=await demAt(lat,lon); if(h0===undefined) return {ok:false}; if(h0===null) return {ok:true,pen:0};
-  const dirs=['北','北北東','北東','東北東','東','東南東','南東','南南東','南','南南西','南西','西南西','西','西北西','北西','北北西'];
-  let best={p:0}; const jobs=[];
-  for(let k=0;k<16;k++) for(const dm of [100,200,300,400,500]){ const a=k*Math.PI/8, la=lat+dm*Math.cos(a)/111320, lo=lon+dm*Math.sin(a)/(111320*Math.cos(lat*Math.PI/180));
-    jobs.push(demAt(la,lo).then(h=>{ if(h==null) return; const rise=h-h0, p=cl01((rise-10)/30)*cl01((600-dm)/500); if(p>best.p) best={p,dir:dirs[k],d:dm,rise:Math.round(rise)}; })); }
-  await Promise.all(jobs); return {ok:true,pen:Math.round(20*best.p),...best};
+// 獣害の起きやすさ: cells/<id>/wild.json（ESA WorldCover の森と筆ポリゴンから）
+//   [f30, f100, f200, dirs, paddy] = 田の縁から 0〜30m・30〜100m・100〜200m の森の割合（%）, 200m以内に森がある方位（16方位のビット）, 周り300mの田の割合（%）
+//   近さ = 0.5×f30 + 0.3×f100 + 0.2×f200（0.5 で満点）, 囲まれ = 森がある方位の数（1〜8方位）, 孤立 = 周りの田 60%→0 〜 10%→1
+//   危なさ R = 0.55×近さ + 0.25×囲まれ + 0.20×孤立（0〜1）→ R×20 点を引く
+const wildCache={};
+function wildLoad(cell){ if(!(cell in wildCache)) wildCache[cell]=fetch(`${DATA}cells/${cell}/wild.json`).then(r=>r.ok?r.json():null).catch(()=>null); return wildCache[cell]; }
+const DIR16=['北','北北東','北東','東北東','東','東南東','南東','南南東','南','南南西','南西','西南西','西','西北西','北西','北北西'];
+function dirSpans(mask){   // 森がある方位のまとまり（例: 「北西〜北」）
+  const on=k=>(mask>>((k+16)%16))&1; if(!mask) return []; if(mask===0xffff) return ['四方'];
+  let st=0; while(on(st)) st++;   // 森のない方位から回り始める
+  const spans=[]; let a=null;
+  for(let i=1;i<=16;i++){ const k=(st+i)%16; if(on(k)){ if(a==null) a=k; } else if(a!=null){ const e=(k+15)%16; spans.push(a===e?DIR16[a]:`${DIR16[a]}〜${DIR16[e]}`); a=null; } }
+  return spans; }
+async function wildRisk(pid){
+  const w=await wildLoad(parcels[pid].cell), row=w&&w.p&&w.p[pid]; if(!row) return {ok:false,pen:0};
+  const [f30,f100,f200,mask,pad]=row, ndir=[...Array(16).keys()].filter(k=>(mask>>k)&1).length;
+  const near=cl01((0.5*f30+0.3*f100+0.2*f200)/100/0.5), encl=cl01((ndir-1)/7), iso=cl01((60-pad)/50);
+  const R=cl01(0.55*near+0.25*encl+0.20*iso), pen=Math.round(20*R), sp=dirSpans(mask).slice(0,2).join('・'), t=[];
+  if(f30>=20) t.push(`${sp||'近く'}側が森に接し（30m以内の森 ${f30}%）`); else if(f100>=20) t.push(`${sp||'近く'}側100m以内に森があり`); else if(f200>=20) t.push(`${sp||'近く'}側200m以内に森があり`);
+  if(ndir>=6) t.push(`森に${ndir}方位を囲まれ`);
+  if(pad<40) t.push(`周り300mの田は${pad}%と少なく`);
+  return {ok:true,pen,R,text:t.length?t.join('、')+'、獣害に注意です':''};
 }
 function rankText(p,mt){
   const ha=p.area/10000, size=p.area>=10000?'大きい':p.area>=3000?'中くらいの':'小さめの';
@@ -1117,17 +1124,17 @@ function rankText(p,mt){
   const st=p.sd==null?'':p.sd<=0.025?'、年ごとの差は小さめ':p.sd<=0.05?'':'、年ごとの差は大きめ';
   const L=[`約${ha<1?ha.toFixed(2):ha.toFixed(1)}haの${size}田で、田の中の生育は${un}。`,`例年の生育は${vg}${st}です。`], ex=[];
   if(p.deep>=0.15) ex.push([p.deep,`前半に出遅れて後半に追いつく所（田面が深いなど）が田の${Math.round(p.deep*100)}%あります。`]);
-  if(mt&&mt.pen>=3) ex.push([mt.pen/20+0.5,`${mt.dir}側 約${mt.d}mで${mt.rise}m高くなる山際に近く、獣害に注意です（−${mt.pen}点）。`]);
+  if(mt&&mt.ok&&mt.pen>=3&&mt.text) ex.push([mt.pen/20+0.5,`${mt.text}（−${mt.pen}点）。`]);
   ex.sort((a,b)=>b[0]-a[0]); if(ex.length) L.push(ex[0][1]);
   return L; }
 async function renderRanks(gen,items){   // items: [{pid,color,r,t}]
   const box=document.getElementById('rankBox'); box.style.display=items.length?'block':'none'; if(!items.length){ box.innerHTML=''; return; }
   const rows=items.map(it=>({...it,p:rankParts(it.pid,it.r,it.t)}));
   const draw=()=>{ box.innerHTML='<h2 style="margin:0 0 2px">圃場の評価</h2>'+rows.map(x=>{ const sc=Math.round(x.p.base-(x.mt&&x.mt.pen||0)), rk=RANK_CUT.find(c=>sc>=c[0]);
-    return `<div class="rk"><div class="bd" style="background:${rk[2]}">${rk[1]}</div><div class="tx"><b><i style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${x.color};margin-right:5px"></i>${parcels[x.pid].name}　${sc}点</b><br>${rankText(x.p,x.mt).join('<br>')}${x.mt&&!x.mt.ok?'<br><span class="hint">（標高データが読めず、山際の判定はしていません）</span>':''}</div></div>`; }).join('')
-    +'<div class="hint">広さ35・生育のそろい25・例年の旺盛さ15・年ごとの安定15・深い所の少なさ10（100点）。山際は最大20点を引きます。</div>'; };
+    return `<div class="rk"><div class="bd" style="background:${rk[2]}">${rk[1]}</div><div class="tx"><b><i style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${x.color};margin-right:5px"></i>${parcels[x.pid].name}　${sc}点</b><br>${rankText(x.p,x.mt).join('<br>')}${x.mt&&!x.mt.ok?'<br><span class="hint">（獣害の手がかりは準備中のため、減点していません）</span>':''}</div></div>`; }).join('')
+    +'<div class="hint">広さ35・生育のそろい25・例年の旺盛さ15・年ごとの安定15・深い所の少なさ10（100点）。獣害の起きやすさ（森との近さ・森に囲まれ具合・周りの田の少なさ）で最大20点を引きます。</div>'; };
   draw();
-  for(const x of rows){ x.mt=await mountainPenalty(x.pid); if(gen!==pxGen) return; draw(); }
+  for(const x of rows){ x.mt=await wildRisk(x.pid); if(gen!==pxGen) return; draw(); }
 }
 async function renderTrend(gen,mode,note,lbl){
   const used=[], spans=[], ranked=[]; let one=null, wait=0, few=0; note.textContent='読み込み中…';
