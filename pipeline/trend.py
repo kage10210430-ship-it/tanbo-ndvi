@@ -411,6 +411,14 @@ def main():
                     made = made + wm if made >= 0 else made
                 except Exception as e:
                     log(f"獣害の手がかり エラー {e}"); made = made or -1
+            # 田の形（変形田の手がかり）。区画の形だけから作るので GEE は使わない。形が変わらなければ1回だけ
+            import shape
+            try:
+                sm = run_all(src, cfg, data_dir, cells, today, mask_id(cfg), log, max(60, limit - (time.time() - t2)), args.workers,
+                             task=lambda c, dl: shape.update_cell(cfg, data_dir, c), need=lambda c: shape.need(data_dir, c), name="田の形")
+                made = made + sm if made >= 0 else made
+            except Exception as e:
+                log(f"田の形 エラー {e}"); made = made or -1
         else:
             log("生育傾向: 残り時間がないので今回は作りません")
     if os.environ.get("GITHUB_OUTPUT"):            # ワークフローで、作った年があるときだけ公開し直すため
