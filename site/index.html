@@ -665,6 +665,11 @@ svg.leaflet-image-layer.leaflet-interactive path {
 		print-color-adjust: exact;
 		}
 	}
+.cropwhy{font-size:11px;line-height:1.5;margin:4px 0 0;color:var(--ink2)}
+.cropwhy:empty{display:none}
+.cropwhy .cw-h{font-weight:600}
+.cropwhy b{display:inline-block;min-width:3em}
+.cropwhy .cw-n{margin-top:2px;font-size:10px}
 </style>
 <style>
   :root{--ink:#1e3a2f;--ink2:#4c5a52;--line:#cfd6cc;--panel:#f3f6f1;--accent:#2f7d4f;--warn:#b8442c;--grid:#e6eae3;
@@ -781,6 +786,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
     <div class="mapbar">
       <div class="ctl" style="margin:0"><span id="dateCtl" style="display:inline-flex;gap:6px;align-items:center"><span>色の日付</span><select id="colorDate"></select></span><label><input type="checkbox" id="colorOn" checked>区画を色分け</label></div>
       <div class="ctl" style="margin:4px 0 0"><span>塗り方</span><select id="fillMode"><option value="abs" selected>絶対表示</option><option value="rel">相対表示</option><option value="trend">生育傾向マップ</option></select><span class="pxnote" id="pxNote"></span></div>
+      <div class="cropwhy" id="cropWhy"></div>
       <div class="bar" id="lgBar"></div><div class="lbl" id="lgLbl"><span>低い 0.2</span><span>NDVI</span><span>0.9 高い</span></div>
     </div>
   </div>
@@ -1065,12 +1071,13 @@ const trCache={};
 function isTrend(m){ return m==='trend'; }
 function trLoad(cell){
   if(!(cell in trCache)) trCache[cell]=Promise.all([fetch(`${DATA}cells/${cell}/trend.json`).then(r=>r.ok?r.json():null),
-      fetch(`${DATA}cells/${cell}/spring.json`).then(r=>r.ok?r.json():null).catch(()=>null), histLoad(cell)]).then(async([m,sj,hj])=>{
-    if(!m) return null; if(!m.layers.length) return {m,g:null,sj,hj};
+      fetch(`${DATA}cells/${cell}/spring.json`).then(r=>r.ok?r.json():null).catch(()=>null), histLoad(cell),
+      fetch(`${DATA}cells/${cell}/crop_s.json`).then(r=>r.ok?r.json():null).catch(()=>null)]).then(async([m,sj,hj,cs])=>{
+    if(!m) return null; if(!m.layers.length) return {m,g:null,sj,hj,cs};
     const img=new Image(); img.src=`${DATA}cells/${cell}/trend.png`; await img.decode();
     const c=document.createElement('canvas'); c.width=img.width; c.height=img.height; const x=c.getContext('2d',{willReadFrequently:true}); x.drawImage(img,0,0);
     const d=x.getImageData(0,0,c.width,c.height).data, g=new Uint8Array(c.width*c.height); for(let i=0;i<g.length;i++) g[i]=d[i*4];
-    return {m,g,sj,hj}; }).catch(()=>null);
+    return {m,g,sj,hj,cs}; }).catch(()=>null);
   return trCache[cell]; }
 const spMemo=new Map();
 function seasonMins(pid,r){   // {sp:{年: 4/15〜6/10 の最小}, au:{年: 8/15〜10/15 の最小}}（晴れた日＝区画の8割以上の区画の NDVI）
@@ -1089,13 +1096,19 @@ function cropOf(row,sp,au){   // その年の作物（'稲' / '休'=休耕か草
     if(R/10<=RICE_R||me==null||me/1000<RICE_JUNE_MAX||(tilled&&au!=null&&au<HARVEST_MAX)) return sp!=null&&!tilled?'休':'稲'; }
   return A==null&&J==null&&R==null?'':'他';
 }
+// 作物の見分けは cells/<id>/crop_s.json（pipeline/crop.py が作る。湛水・代かき・生育・刈り取り・麦・草の証拠と前後の年・まわりの田から）を使う。
+// {"years":[..],"reasons":[..],"p":{pid:[[作物, 稲の確からしさ%, 暫定1/0, 理由の番号] | null（年ごと）]}}。ない田・年だけ上の簡単な決まりで見分ける
+function cropInfo(pid,r){   // {年: {c: 作物, p: 稲の確からしさ%, prov: 暫定か, why: 理由}}（crop_s.json にある年だけ）
+  const cs=r&&r.cs, a=cs&&cs.p&&cs.p[pid], out={}; if(!a) return out;
+  cs.years.forEach((y,i)=>{ const v=a[i]; if(v) out[y]={c:v[0],p:v[1],prov:!!v[2],why:cs.reasons[v[3]]||''}; }); return out; }
 function cropsOf(pid,r){   // {年: 作物}
-  const rows=(r&&r.m.p[pid])||{}, sm=seasonMins(pid,r), out={}; for(const y in rows) out[y]=cropOf(rows[y],sm.sp[y],sm.au[y]); return out; }
+  const rows=(r&&r.m.p[pid])||{}, ci=cropInfo(pid,r), sm=seasonMins(pid,r), out={};
+  for(const y in rows) out[y]=y in ci?ci[y].c:cropOf(rows[y],sm.sp[y],sm.au[y]); return out; }
 function drawTrend(pid,r){   // 戻り値 {years: 重ねた稲の年, rice: 稲と見分けた年（画素がない年も）, mugi, other, known: 手がかりがある年の数, span: 目盛り（0なら描けなかった）}
   const {m,g}=r, rows=m.p[pid]||{}, ys=Object.keys(rows).sort(), cr=cropsOf(pid,r), rice=ys.filter(y=>cr[y]==='稲');
   const lay=(y,w)=>rows[y][w==='e'?3:5]>0&&m.layers.includes(y+w)?{k:m.layers.indexOf(y+w),b:Math.max(0.05,rows[y][w==='e'?4:6]/1000)}:null;
   const yrs=rice.map(y=>[y,lay(y,'e'),lay(y,'l')]).filter(([,e,l])=>e||l);
-  const out={years:yrs.map(x=>x[0]),rice,mugi:ys.filter(y=>cr[y]==='麦'),fallow:ys.filter(y=>cr[y]==='休'),other:ys.filter(y=>cr[y]==='他'),known:ys.filter(y=>cr[y]).length,span:0};
+  const out={info:cropInfo(pid,r),years:yrs.map(x=>x[0]),rice,mugi:ys.filter(y=>cr[y]==='麦'),fallow:ys.filter(y=>cr[y]==='休'),other:ys.filter(y=>cr[y]==='他'),known:ys.filter(y=>cr[y]).length,span:0};
   if(!g||yrs.length<TREND_MIN_YEARS) return out;
   const R=pxRegion(pid,m); if(!R) return out; const {c0,r0,cw,ch,inside}=R;
   const at=(o,y,x)=>{ if(!o) return null; const v=g[(o.k*m.h+r0+y)*m.w+c0+x]; return v>0?((v-1)/254*0.6-0.3)/o.b:null; };   // その年のその田の中央値との差（%）
@@ -1270,20 +1283,26 @@ async function renderTrend(gen,mode,note,lbl){
   if(spans.length){ const f=x=>Math.round(x*100), a=f(Math.min(...spans)), b=f(Math.max(...spans));
     lbl.innerHTML=`<span>生育弱傾向（−${a===b?a:a+'〜'+b}%）</span><span>${spans.length>1?'田ごとに自動':'この田の中の差'}</span><span>（+${a===b?a:a+'〜'+b}%）生育良傾向</span>`; }
   const msg=[];
-  const ex=one?[one.mugi.length?'麦 '+one.mugi.join('・'):'',one.fallow.length?'休耕か草（春に田起こし・代掻きが見えない）'+one.fallow.join('・'):'',one.other.length?'その他 '+one.other.join('・'):''].filter(Boolean).join('、'):'';
+  const ex=one?[one.mugi.length?'麦 '+one.mugi.join('・'):'',one.fallow.length?'休耕か草 '+one.fallow.join('・'):'',one.other.length?'その他 '+one.other.join('・'):''].filter(Boolean).join('、'):'';
   if(selected.length===1&&one&&one.span){
     msg.push(`稲の年 ${one.years.join('・')} を重ねています`+(ex?`（${ex} は除く）`:'')); }
   else if(used.length) msg.push(`田ごとに稲の年だけを重ねています（${Math.min(...used)===Math.max(...used)?Math.min(...used):Math.min(...used)+'〜'+Math.max(...used)}回）`);
   if(few) msg.push(selected.length>1?`作れない田 ${few}枚（稲の年が足りない・小さすぎる）`:!one.known?'この田は小さいため作れません':one.rice.length<TREND_MIN_YEARS?`稲と見分けられた年が${one.rice.length}回しかないため作れません（${TREND_MIN_YEARS}回以上必要${ex?`。${ex}`:''}）`:'田が小さく、晴れた日の画素が足りないため作れません');
   if(wait) msg.push(`まだ準備中 ${wait}枚（順に作っています）`);
   note.textContent=msg.join(' / ');
+  const cw=document.getElementById('cropWhy'); cw.innerHTML='';
+  if(selected.length===1&&one&&one.info){   // 年ごとの見分けと理由
+    const ys=Object.keys(one.info).sort(); if(ys.length){
+      cw.innerHTML='<div class="cw-h">年ごとの作物の見分け</div>'+ys.map(y=>{ const o=one.info[y], nm={'稲':'稲','麦':'麦','休':'休耕か草','他':'その他','':'わからない'}[o.c]??o.c;
+        return `<div><b>${y}</b> ${nm}${o.p!=null?`<span>（稲 ${o.p}%）</span>`:''} <span>${o.why.replace(/^[^:]*:\s*/,'').replace(/[<>&]/g,'')}</span></div>`; }).join('')
+        +(ys.some(y=>one.info[y].prov)?'<div class="cw-n">暫定＝収穫前など、データがそろうと見直します（11月ごろ）</div>':''); } }
 }
 async function renderPx(){
   const gen=++pxGen, mode=fillMode(), on=document.getElementById('colorOn').checked, note=document.getElementById('pxNote');
   const bar=document.getElementById('lgBar'), lbl=document.getElementById('lgLbl');
   bar.classList.toggle('rel',mode==='rel'||isTrend(mode));
   lbl.innerHTML=mode==='rel'?'<span>その田の平均より低い</span><span>田の中の差</span><span>高い</span>':isTrend(mode)?'<span>生育弱傾向</span><span>稲の年の傾向</span><span>生育良傾向</span>':'<span>低い 0.2</span><span>NDVI</span><span>0.9 高い</span>';
-  pxLayer.clearLayers(); if(!isTrend(mode)||!selected.length||!on){ const b=document.getElementById('rankBox'); b.style.display='none'; b.innerHTML=''; }
+  pxLayer.clearLayers(); document.getElementById('cropWhy').innerHTML=''; if(!isTrend(mode)||!selected.length||!on){ const b=document.getElementById('rankBox'); b.style.display='none'; b.innerHTML=''; }
   if(!on){ note.textContent=''; return; }
   if(!selected.length){ note.textContent=isTrend(mode)?'田んぼを選ぶと、その中の生育の傾向（稲の年だけを重ねたもの）を色分けします':'田んぼを選ぶと、その中を10m画素で色分けします'; return; }
   if(isTrend(mode)) return renderTrend(gen,mode,note,lbl);
