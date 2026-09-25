@@ -1,0 +1,17 @@
+# fetch-docs ワークフローで取ってくる資料（市町ごとの鳥獣被害の数字を探す）
+https://www.pref.fukui.lg.jp/doc/021500/choujyugai/cyoujyuugai.html
+https://www.pref.fukui.lg.jp/doc/021500/choujyugai/cyoujyuugai_d/fil/R5higai.pdf
+https://www.pref.fukui.lg.jp/doc/021500/choujyugai/naze1.html
+https://www.city.fukui.lg.jp/sigoto/nourin/choujyu/boushikeikaku.html
+https://www.city.ono.fukui.jp/sangyo/noringyo/choujugai/higaibousikeikaku.files/0001_20230814.pdf
+https://www.city.sabae.fukui.jp/anzen_anshin/chojuhigaitaisaku/keikaku/higaibousi/keikaku-kousin.files/R8-10_boushikeikaku6.pdf.pdf
+https://www.city.echizen.lg.jp/office/kankyounourin/030/yugaityojyu/tyozyuhigaibousikeikaku/tyozyuhigaibousikeikaku_d/fil/R7plan.pdf
+https://www.town.echizen.fukui.jp/chousei/11/05/p008269.html
+https://www.city.tsuruga.lg.jp/relief-safety/kankyo_kogai/gaichu_gaijyu/chojuhigaiboshi.files/reinanhigaikeikaku.pdf
+https://www.city.fukui-sakai.lg.jp/jigyosha/norin/choju/index.html
+https://www.city.awara.lg.jp/mokuteki/industry/industry03/industry0304/index.html
+https://www.town.ikeda.fukui.jp/kurashi/nougyou/1539/index.html
+https://www.town.minamiechizen.lg.jp/kurasi/104/norin_suisan/cyo_jyu/index.html
+https://www.city.katsuyama.fukui.jp/soshiki/13/
+https://www.maff.go.jp/j/seisan/tyozyu/higai/hogai_zyoukyou/attach/pdf/index-51.pdf
+https://www.town.eiheiji.lg.jp/

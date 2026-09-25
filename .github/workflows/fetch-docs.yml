@@ -1,5 +1,7 @@
-# 公開されている資料（市町の鳥獣被害防止計画の PDF など）を取ってきて、文字にして fetch-docs ブランチに置く。
-# 作業用のコンテナから役所のサイトに直接つながらないときに使う（手で Run workflow してもよい）
+# 公開されている資料（市町の鳥獣被害防止計画の PDF など）を取ってきて、文字にしてログに出す。
+# 作業用のコンテナから役所のサイトに直接つながらないときに使う。
+#   手で: Actions → fetch-docs → Run workflow（URL を空白で区切って入れる）
+#   自動: .github/fetch-urls.txt（1行に1つ）を書きかえて push したとき
 name: fetch-docs
 on:
   workflow_dispatch:
@@ -7,32 +9,44 @@ on:
       urls:
         description: 取ってくる URL（空白で区切る）
         required: true
+  push:
+    paths: [".github/fetch-urls.txt"]
 permissions:
-  contents: write
+  contents: read
 jobs:
   fetch:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      - uses: actions/checkout@v4
       - name: 道具
         run: sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils >/dev/null
       - name: 取ってくる
         env:
           URLS: ${{ inputs.urls }}
         run: |
-          mkdir out && cd out
+          [ -n "$URLS" ] || URLS=$(grep -v '^#' .github/fetch-urls.txt)
+          mkdir -p out && cd out
           i=0
           for u in $URLS; do
             i=$((i+1)); f=$(printf '%02d' $i)
-            echo "$u" > $f.url
-            if ! curl -sSL --max-time 120 -A 'Mozilla/5.0' -o $f.bin "$u"; then echo "失敗 $u"; rm -f $f.bin; continue; fi
-            if head -c 5 $f.bin | grep -q '%PDF'; then mv $f.bin $f.pdf; pdftotext -layout $f.pdf $f.txt || true
-            else mv $f.bin $f.html; fi
+            echo "=====DOC $f $u"
+            if ! curl -sSL --max-time 120 -A 'Mozilla/5.0' -o $f.bin "$u"; then echo "失敗"; continue; fi
+            if head -c 5 $f.bin | grep -q '%PDF'; then pdftotext -layout $f.bin - | sed 's/[[:space:]]*$//' | grep -v '^$' | head -n 1500
+            else python3 - "$f.bin" "$u" <<'PY'
+          import sys, re, html
+          from urllib.parse import urljoin
+          b = open(sys.argv[1], "rb").read()
+          m = re.search(rb'charset=["\']?([\w-]+)', b[:3000]); enc = (m.group(1).decode() if m else "utf-8")
+          t = b.decode(enc, "replace")
+          for h, a in re.findall(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', t, re.S | re.I):
+              a = re.sub(r"<[^>]+>|\s+", " ", a).strip()
+              if re.search(r"\.(pdf|xlsx?|csv)$", h, re.I) or re.search("鳥獣|獣害|被害|計画", a):
+                  print("LINK", urljoin(sys.argv[2], html.unescape(h)), a[:80])
+          t = re.sub(r"(?is)<(script|style|head)[^>]*>.*?</\1>", " ", t)
+          t = html.unescape(re.sub(r"<[^>]+>", "\n", t))
+          lines = [re.sub(r"\s+", " ", x).strip() for x in t.split("\n")]
+          print("\n".join([x for x in lines if x][:400]))
+          PY
+            fi
           done
-          ls -la
-      - name: fetch-docs ブランチに置く
-        run: |
-          cd out
-          git init -q -b fetch-docs && git add -A
-          git -c user.name=github-actions -c user.email=41898282+github-actions[bot]@users.noreply.github.com commit -qm "fetch ${{ github.run_id }}"
-          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" fetch-docs
