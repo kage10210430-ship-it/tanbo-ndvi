@@ -699,9 +699,31 @@ svg.leaflet-image-layer.leaflet-interactive path {
   .chips{display:flex;flex-wrap:wrap;gap:6px;min-height:30px}
   .chip{display:inline-flex;align-items:center;gap:6px;border:1.5px solid;border-radius:20px;padding:3px 8px 3px 10px;font-size:13px;background:#fff}
   .chip i{width:11px;height:11px;border-radius:50%;display:inline-block}
-  .rankbox{margin:8px 0 4px;display:none} .rankbox .rk{display:flex;gap:10px;align-items:flex-start;padding:6px 0;border-bottom:1px solid var(--grid)}
-  .rankbox .bd{flex:none;width:34px;height:34px;border-radius:6px;color:#fff;font-weight:700;font-size:20px;display:flex;align-items:center;justify-content:center}
-  .rankbox .tx{font-size:13px;line-height:1.5} .rankbox .tx b{font-size:13.5px}
+  .side{container-type:inline-size}
+  /* 圃場の評価: 右側の幅に合わせて文字も大きくする（440px で約13.5px、広げると最大20px） */
+  .rankbox{margin:8px 0 4px;display:none;font-size:clamp(13px,3.1cqi,20px)} .rankbox h2{font-size:1.05em}
+  .rankbox .rk{display:flex;gap:.75em;align-items:flex-start;padding:.45em 0;border-bottom:1px solid var(--grid)}
+  .rankbox .tx{font-size:1em;line-height:1.55} .rankbox .tx b{font-size:1.04em} .rankbox .hint{font-size:.88em}
+  .rankbox .bd{flex:none;width:3.5em;height:3.7em;border-radius:.55em;display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1;font-weight:800;position:relative;overflow:hidden;cursor:help;user-select:none}
+  .rankbox .bd small{font-size:.58em;font-weight:700;letter-spacing:.12em;margin-bottom:.2em;opacity:.9}
+  .rankbox .bd span{font-size:1.95em;position:relative;z-index:1}
+  .rk-S{background:linear-gradient(135deg,#ff5f6d,#ffc371,#47e5bc,#4f9dff,#b56cff,#ff5f6d);background-size:300% 300%;animation:rkHolo 4s linear infinite;color:#fff;
+        text-shadow:0 0 6px rgba(255,255,255,.95),0 1px 3px rgba(0,0,0,.55);box-shadow:0 0 10px rgba(181,108,255,.75),0 0 20px rgba(79,157,255,.45)}
+  .rk-S::after,.rk-A::after{content:'';position:absolute;inset:0;background:linear-gradient(115deg,transparent 30%,rgba(255,255,255,.8) 45%,transparent 60%);background-size:250% 100%;animation:rkShine 2.4s ease-in-out infinite}
+  .rk-S::before{content:'✦';position:absolute;top:.2em;right:.28em;font-size:.62em;color:#fff;z-index:2;animation:rkTwinkle 1.4s ease-in-out infinite}
+  .rk-A{background:linear-gradient(145deg,#fff4b8 0%,#ecc75a 32%,#b8860b 62%,#f7dc84 100%);color:#5a3d00;text-shadow:0 1px 0 rgba(255,255,255,.65);
+        box-shadow:inset 0 0 0 2px rgba(255,255,255,.5),0 2px 7px rgba(184,134,11,.5)}
+  .rk-A::after{animation-duration:4.5s;opacity:.7}
+  .rk-B{background:linear-gradient(145deg,#f4f7fa,#bcc7d2 55%,#e6ebf0);color:#2d3e50;box-shadow:inset 0 0 0 1px rgba(0,0,0,.1)}
+  .rk-C{background:#dcd7cb;color:#5d5645}
+  .rk-D{background:#c9c5c0;color:#6b6560}
+  @keyframes rkHolo{0%{background-position:0% 50%}100%{background-position:300% 50%}}
+  @keyframes rkShine{0%{background-position:160% 0}100%{background-position:-110% 0}}
+  @keyframes rkTwinkle{0%,100%{opacity:.25;transform:scale(.8)}50%{opacity:1;transform:scale(1.15)}}
+  @media (prefers-reduced-motion:reduce){.rk-S,.rk-S::after,.rk-S::before,.rk-A::after{animation:none}}
+  .rktip{position:fixed;z-index:2000;display:none;overflow:auto;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.18);padding:8px 10px;font-size:12px;line-height:1.5;max-width:min(94vw,40em)}
+  .rktip table{font-size:1em;margin:4px 0;border-collapse:collapse} .rktip td,.rktip th{white-space:normal;vertical-align:top;padding:3px 5px;border-top:1px solid var(--grid);text-align:left}
+  .rktip td:first-child,.rktip td.num{white-space:nowrap} .rktip .why{color:var(--ink2);font-size:.95em}
   .chip button{border:0;background:transparent;font-size:15px;cursor:pointer;color:var(--ink2);padding:0 2px;line-height:1}
   .hint{color:var(--ink2);font-size:12.5px}
   .ctl{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;margin:4px 0}
@@ -843,7 +865,7 @@ function loadPackage(p, label){
   document.getElementById('foot').textContent=(p.meta?.source?'データ: '+p.meta.source+'。':'')+(p.meta?.attribution||'Contains modified Copernicus Sentinel data')+'。地図: 国土地理院。区画: 農林水産省 筆ポリゴン。NDVIは10m画素の区画平均で、0.8〜0.9で頭打ちになります。';
   buildColorDates(); refresh();
 }
-function tipText(pid){ const s=seriesOf(pid).filter(p=>!p.rad); const last=s[s.length-1]; return `${parcels[pid].name}${parcels[pid].crop?' '+parcels[pid].crop:''}<br>${last?'直近 '+last.date+'：'+last.ndvi.toFixed(2):'データなし'}`; }
+function tipText(pid){ const s=seriesOf(pid).filter(p=>!p.rad); const last=s[s.length-1]; return `${selLabel(pid)}${parcels[pid].crop?' '+parcels[pid].crop:''}<br>${last?'直近 '+last.date+'：'+last.ndvi.toFixed(2):'データなし'}`; }
 
 // ---------- data access ----------
 function thr(){ return (+document.getElementById('thr').value||70)/100; }
@@ -921,6 +943,9 @@ function toggleSelect(pid){ setTimeout(buildPxDates,0);
   else { if(selected.length>=MAX_SEL){ setStatus(`選べるのは${MAX_SEL}枚までです。チップの×で外してから選んでください。`); return; } const used=selected.map(s=>s.color); selected.push({pid,color:PALETTE.find(c=>!used.includes(c))||PALETTE[0]}); setStatus(''); }
   refresh();
 }
+function selLabel(pid){   // 選んだ田の呼び名（色と同じ番号: ①=青, ②=赤 …）。選んでいない田は区画の番号
+  const s=selected.find(x=>x.pid===pid); if(!s) return parcels[pid].name; const k=PALETTE.indexOf(s.color);
+  return '選択中圃場'+('①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳'[k]||String(k+1)); }
 function setStatus(m){ document.getElementById('status').textContent=m; }
 document.getElementById('btnClear').onclick=()=>{selected=[];refresh();};
 
@@ -1085,7 +1110,7 @@ function buildCurve(pid,r,h,y0){
 // 区切りは県全体の稲の田（約12万枚）で、獣害の減点のあとの点が S 8%・A 24%・B 43%・C 20%・D 5% になるように
 // いまは公開ページにも出す。広く知らせる前に SHOW_RANK を false にすると、手元のパソコン（file: か localhost）で開いたときだけ出る
 // （地代・売買や個人の評価に使われるおそれがあるため）
-const RANK_CUT=[[80,'S','#b8860b'],[67,'A','#2e8b3a'],[45,'B','#1a73e8'],[27,'C','#e8710a'],[-1e9,'D','#d93025']];
+const RANK_CUT=[[80,'S'],[67,'A'],[45,'B'],[27,'C'],[-1e9,'D']];   // 見た目は CSS の .rk-S 〜 .rk-D
 const SHOW_RANK=true||location.protocol==='file:'||/^(localhost|127\.)/.test(location.hostname);
 const shapeCache={};
 function shapeLoad(cell){ if(!(cell in shapeCache)) shapeCache[cell]=fetch(`${DATA}cells/${cell}/shape.json`).then(r=>r.ok?r.json():null).catch(()=>null); return shapeCache[cell]; }
@@ -1116,8 +1141,15 @@ function dirSpans(mask){   // 森がある方位のまとまり（例: 「北西
   const spans=[]; let a=null;
   for(let i=1;i<=16;i++){ const k=(st+i)%16; if(on(k)){ if(a==null) a=k; } else if(a!=null){ const e=(k+15)%16; spans.push(a===e?DIR16[a]:`${DIR16[a]}〜${DIR16[e]}`); a=null; } }
   return spans; }
+// 田の市町: data/city.json（国土数値情報の行政区域から）。cells[セル] = [ふつうの市町, {ほかの市町: [pid の頭8文字 …]}]
+let cityP=null;
+function cityLoad(){ return cityP||(cityP=fetch(`${DATA}city.json`).then(r=>r.ok?r.json():null).catch(()=>null)); }
+async function cityOf(pid){
+  const c=await cityLoad(), e=c&&c.cells&&c.cells[parcels[pid].cell]; if(!e) return null;
+  let code=e[0]; for(const k in (e[1]||{})) if(e[1][k].some(x=>x===pid||x===pid.slice(0,8))) code=k;
+  return {code,name:c.names[code],dmg:c.dmg&&c.dmg[code]}; }
 async function wildRisk(pid){
-  const w=await wildLoad(parcels[pid].cell), row=w&&w.p&&w.p[pid]; if(!row) return {ok:false,pen:0};
+  const [w,city]=await Promise.all([wildLoad(parcels[pid].cell),cityOf(pid)]), row=w&&w.p&&w.p[pid]; if(!row) return {ok:false,pen:0,city};
   const [f30,f100,f200,mask,pad]=row, ndir=[...Array(16).keys()].filter(k=>(mask>>k)&1).length;
   const near=cl01((0.6*f30+0.4*f100)/100/0.4), encl=cl01((ndir-3)/9), iso=cl01((40-pad)/35);
   const R=cl01(0.6*near+0.25*encl+0.15*iso), pen=Math.round(20*R), sp=dirSpans(mask).slice(0,2).join('・'), t=[];
@@ -1125,14 +1157,14 @@ async function wildRisk(pid){
   else { if(f30>=20) t.push(`${sp||'近く'}側が森に接し（30m以内の森 ${f30}%）`); else if(f100>=20) t.push(`${sp||'近く'}側100m以内に森があり`); else if(f200>=20) t.push(`${sp||'近く'}側200m以内に森があり`);
     if(ndir>=6) t.push(`森に${ndir}方位を囲まれ`); }
   if(pad<40) t.push(`周り300mの田は${pad}%と少なく`);
-  return {ok:true,pen,R,text:t.length?t.join('、')+'、獣害に注意です':''};
+  return {ok:true,pen,R,f30,f100,f200,ndir,pad,near,encl,iso,city,text:t.length?t.join('、')+'、獣害に注意です':''};
 }
 function rankText(p,mt){
-  const ha=p.area/10000, size=p.area>=10000?'大きい':p.area>=3000?'中くらいの':'小さめの';
+  const size=p.area>=10000?'大きい':p.area>=3000?'中くらいの':'小さめの';
   const un=p.spread<=0.03?'よくそろっています':p.spread<=0.08?'おおむねそろっています':'ムラが大きめです';
   const vg=p.pct>=0.7?`旺盛（地区の上位${Math.max(1,Math.round((1-p.pct)*10))}割）`:p.pct<=0.3?`控えめ（地区の下位${Math.max(1,Math.round(p.pct*10))}割）`:'地区の平均くらい';
   const st=p.sd==null?'':p.sd<=0.025?'、年ごとの差は小さめ':p.sd<=0.05?'':'、年ごとの差は大きめ';
-  const sh=p.sh, hs=`約${ha<1?ha.toFixed(2):ha.toFixed(1)}ha`; let l1=`${hs}の${size}田です。`;
+  const sh=p.sh, hs=`${Math.round(p.area/100)}a`; let l1=`${hs}の${size}田です。`;
   if(sh){ const [lb,loss,per,na,mn]=sh;
     if(loss<=5&&per<=115&&!na) l1=`${hs}の${size}田で、形は整っています（1行程は平均約${lb}m）。`;
     else if(loss<=12) l1=`${hs}の${size}田で、形はやや変形しています（同じ広さの長方形より機械作業が約${Math.max(1,loss)}%多い）。`;
@@ -1142,13 +1174,50 @@ function rankText(p,mt){
   if(mt&&mt.ok&&mt.pen>=3&&mt.text) ex.push([mt.pen/20+0.5,`${mt.text}（−${mt.pen}点）。`]);
   ex.sort((a,b)=>b[0]-a[0]); if(ex.length) L.push(ex[0][1]);
   return L; }
+let rkTipFor=null, rkPinned=false;
+function rankTip(b,x,pin){   // ランクの札の説明（点数の内わけと、それぞれの計算のしかた）。pin = 押して出した（ほかを押すまで出しておく）
+  let el=document.getElementById('rkTip'); if(!el){ el=document.createElement('div'); el.id='rkTip'; el.className='rktip'; document.body.appendChild(el);
+    document.addEventListener('click',()=>rankTip(null)); window.addEventListener('scroll',e=>{ if(!el.contains(e.target)) rankTip(null); },true); }
+  rkTipFor=b; rkPinned=!!pin; if(!b){ el.style.display='none'; return; }
+  el.style.pointerEvents=pin?'auto':'none';
+  const p=x.p, P=p.pts, mt=x.mt, pen=mt&&mt.ok?mt.pen:0, sc=Math.round(p.base-pen), rk=RANK_CUT.find(c=>sc>=c[0])[1], f1=v=>v.toFixed(1), pc=v=>Math.round(v*100)+'%';
+  const sh=p.sh, row=(n,v,max,why)=>`<tr><td>${n}</td><td class="num"><b>${f1(v)}</b> / ${max}</td><td class="why">${why}</td></tr>`;
+  const cut=RANK_CUT.slice(0,4).map(c=>`${c[1]} ${c[0]}点以上`).join('・')+'・D それ未満';
+  el.innerHTML=`<div style="display:flex;align-items:center;gap:8px"><b style="font-size:15px">ランク ${rk}</b><b style="color:${x.color}">${selLabel(x.pid)}</b><span>合計 <b style="font-size:15px">${sc}点</b>（${f1(p.base)}${pen?` − 獣害 ${pen}`:''}）</span></div>
+  <table><tr><th>項目</th><th>点</th><th>計算のしかた・根拠</th></tr>
+  ${row('広さ',P.area,30,`${Math.round(p.area/100)}a。30 × log(面積÷5a) ÷ log(20)：5a で0点、1ha（100a）以上で満点`)}
+  ${row('生育のそろい',P.unif,20,`田の中の生育の差（稲の年を重ねた10m画素の、上下1割を除いた幅）が ${pc(p.spread)}。20 ×（15% − 差）÷ 13%：2%以下で満点、15%以上で0点`)}
+  ${row('形',P.shape,15,sh?`同じ広さの 1:3 の長方形より機械作業が ${Math.max(0,sh[1])}% 多く、畦畔は ${(sh[2]/100).toFixed(2)}倍（1行程 平均${sh[0]}m${sh[3]?`・鋭角の隅${sh[3]}か所`:''}）。15 ×（1 − 0.7×作業の増え÷20% − 0.3×畦畔の増え÷40%）`:'形のデータがまだないので半分（7.5点）')}
+  ${row('深い所の少なさ',P.deep,10,`前半（6月ごろ）に出遅れて後半（8月ごろ）に大きく追いつく所（田面が深いなど）が田の ${pc(p.deep)}。10 ×（1 − 割合÷40%）`)}
+  ${row('例年の旺盛さ',P.vig,15,`稲の年の8月ごろの NDVI の平均が、同じ地区（約2km四方）の稲の田の中で下から ${pc(p.pct)} の位置。15 × その位置`)}
+  ${row('年ごとの安定',P.stab,10,p.sd==null?'稲の年が1回だけなので半分（5点）':`8月ごろの NDVI の年ごとのばらつき（標準偏差）が ${p.sd.toFixed(3)}。10 ×（0.08 − ばらつき）÷ 0.06：0.02以下で満点、0.08以上で0点`)}
+  ${mt&&mt.ok?`<tr><td>獣害</td><td class="num"><b>−${pen}</b> / 20</td><td class="why">田の縁から 30m以内の森 ${mt.f30}%・30〜100m ${mt.f100}%、森がある方位 ${mt.ndir}/16、周り300mの田 ${mt.pad}%。
+    近さ ${mt.near.toFixed(2)} =（0.6×30m以内 + 0.4×30〜100m）÷ 40%、囲まれ ${mt.encl.toFixed(2)} =（方位数 − 3）÷ 9、孤立 ${mt.iso.toFixed(2)} =（40% − 周りの田）÷ 35%（どれも 0〜1）。
+    20 ×（0.6×近さ + 0.25×囲まれ + 0.15×孤立）（森は ESA WorldCover 2021、10m）${mt.city?`<br>市町：${mt.city.name}`:''}</td></tr>`:`<tr><td>獣害</td><td class="num">−0</td><td class="why">手がかりの準備中のため減点なし</td></tr>`}
+  </table><div class="why">ランクの区切り：${cut}（県全体の稲の田で S 8%・A 24%・B 43%・C 20%・D 5%）。NDVI は Sentinel-2 と Landsat、形は筆ポリゴン（農林水産省）から。</div>`;
+  el.style.fontSize=Math.max(12,0.85*parseFloat(getComputedStyle(b.closest('.rankbox')).fontSize))+'px';
+  el.style.maxHeight=''; el.style.display='block'; const r=b.getBoundingClientRect(), w=el.offsetWidth; let h=el.offsetHeight, left, top;
+  if(r.right+8+w<=innerWidth-8||r.left-8-w>=8){   // 横に置ける
+    left=r.right+8+w<=innerWidth-8?r.right+8:r.left-8-w; top=Math.max(8,Math.min(r.top,innerHeight-h-8));
+    if(h>innerHeight-16){ top=8; h=innerHeight-16; } }
+  else {   // 上か下（広いほう）
+    left=Math.max(8,Math.min(r.left,innerWidth-w-8)); const below=innerHeight-r.bottom-14, above=r.top-14;
+    if(h>below&&above>below){ h=Math.min(h,above); top=r.top-6-h; } else { h=Math.min(h,Math.max(below,120)); top=r.bottom+6; } }
+  el.style.maxHeight=h+'px'; el.style.left=left+'px'; el.style.top=top+'px'; el.onclick=e=>e.stopPropagation();
+}
 async function renderRanks(gen,items){   // items: [{pid,color,r,t}]
   const box=document.getElementById('rankBox'); box.style.display=items.length&&SHOW_RANK?'block':'none'; if(!items.length||!SHOW_RANK){ box.innerHTML=''; return; }
   const shs=await Promise.all(items.map(it=>shapeLoad(parcels[it.pid].cell))); if(gen!==pxGen) return;
   const rows=items.map((it,i)=>({...it,p:rankParts(it.pid,it.r,it.t,shs[i]&&shs[i].p&&shs[i].p[it.pid])}));
-  const draw=()=>{ box.innerHTML='<h2 style="margin:0 0 2px">圃場の評価</h2>'+rows.map(x=>{ const sc=Math.round(x.p.base-(x.mt&&x.mt.pen||0)), rk=RANK_CUT.find(c=>sc>=c[0]);
-    return `<div class="rk"><div class="bd" style="background:${rk[2]}">${rk[1]}</div><div class="tx"><b><i style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${x.color};margin-right:5px"></i>${parcels[x.pid].name}　${sc}点</b><br>${rankText(x.p,x.mt).join('<br>')}${x.mt&&!x.mt.ok?'<br><span class="hint">（獣害の手がかりは準備中のため、減点していません）</span>':''}</div></div>`; }).join('')
-    +'<div class="hint">広さ30・生育のそろい20・形15・深い所の少なさ10・例年の旺盛さ15・年ごとの安定10（100点）。獣害の起きやすさ（森との近さ・森に囲まれ具合・周りの田の少なさ）で最大20点を引きます。</div>'; };
+  const draw=()=>{ box.innerHTML='<h2 style="margin:0 0 2px">圃場の評価</h2>'+rows.map((x,i)=>{ const sc=Math.round(x.p.base-(x.mt&&x.mt.pen||0)), rk=RANK_CUT.find(c=>sc>=c[0])[1];
+    return `<div class="rk"><div class="bd rk-${rk}" data-i="${i}" tabindex="0" aria-label="ランク${rk}（くわしい点数）"><small>Rank</small><span>${rk}</span></div><div class="tx"><b style="color:${x.color}">${selLabel(x.pid)}</b>　<b>${sc}点</b><br>${rankText(x.p,x.mt).join('<br>')}${x.mt&&!x.mt.ok?'<br><span class="hint">（獣害の手がかりは準備中のため、減点していません）</span>':''}</div></div>`; }).join('')
+    +'<div class="hint">広さ30・生育のそろい20・形15・深い所の少なさ10・例年の旺盛さ15・年ごとの安定10（100点）。獣害の起きやすさ（森との近さ・森に囲まれ具合・周りの田の少なさ）で最大20点を引きます。ランクの札にマウスを重ねる（スマホは押す）と、点数のわけが出ます。</div>';
+    // マウスは重ねると出る（押すと出したままにする）。スマホは押すと出て、ほかを押すと消える
+    box.querySelectorAll('.bd').forEach(b=>{ const x=rows[+b.dataset.i];
+      b.onpointerenter=e=>{ if(e.pointerType==='mouse'&&rkTipFor!==b) rankTip(b,x,false); };
+      b.onpointerleave=e=>{ if(e.pointerType==='mouse'&&rkTipFor===b&&!rkPinned) rankTip(null); };
+      b.onclick=e=>{ e.stopPropagation(); if(rkTipFor===b&&rkPinned) rankTip(null); else rankTip(b,x,true); };
+      b.onkeydown=e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); b.click(); } else if(e.key==='Escape') rankTip(null); }; }); };
   draw();
   for(const x of rows){ x.mt=await wildRisk(x.pid); if(gen!==pxGen) return; draw(); }
 }
@@ -1206,7 +1275,7 @@ function renderChips(){
   const box=document.getElementById('chips'); box.innerHTML='';
   if(!selected.length){ box.innerHTML='<span class="hint">地図の区画をタップすると、ここに並びます。2枚以上選ぶと比べられます。</span>'; return; }
   for(const s of selected){ const c=document.createElement('span'); c.className='chip'; c.style.borderColor=s.color;
-    c.innerHTML=`<i style="background:${s.color}"></i>${parcels[s.pid].name}${parcels[s.pid].crop?' <span class="hint">'+parcels[s.pid].crop+'</span>':''}<button title="外す">×</button>`;
+    c.innerHTML=`<i style="background:${s.color}"></i><span style="color:${s.color};font-weight:700">${selLabel(s.pid)}</span>${parcels[s.pid].crop?' <span class="hint">'+parcels[s.pid].crop+'</span>':''}<button title="外す">×</button>`;
     c.querySelector('button').onclick=()=>toggleSelect(s.pid); box.appendChild(c); }
 }
 
@@ -1221,13 +1290,13 @@ function drawChart(){
   let xmin,xmax; const series=[]; const tmode=isTrend(fillMode());
   document.getElementById('modeCtl').style.display=tmode?'none':''; document.getElementById('trendHint').style.display=tmode?'':'none';
   if(tmode) setStatus(selected.length?'':'田んぼを選ぶとグラフが出ます。');
-  const src=tmode?[]:selected.map(s=>({label:parcels[s.pid].name,color:s.color,dash:'',pts:seriesOf(s.pid)}));
+  const src=tmode?[]:selected.map(s=>({label:selLabel(s.pid),color:s.color,dash:'',pts:seriesOf(s.pid)}));
   if(document.getElementById('nbOn').checked&&selected.length){ const nb=neighborSeries(); if(nb.n) src.push({label:`近隣の田の平均（${nb.n}枚）`,color:'#8a8f8c',dash:'6 4',pts:nb.pts}); }
   // 期間は 5/10〜9/30（今年＝最新の観測がある年）。前年と重ねるときは各年の 5/10 からの日数で並べる
   const y0=new Date(now).getUTCFullYear(), SEAS=[[4,10],[8,30]], sStart=y=>Date.UTC(y,SEAS[0][0],SEAS[0][1]), sEnd=y=>Date.UTC(y,SEAS[1][0],SEAS[1][1]);
   const seasonTicks=(off)=>[[sStart(y0),'5/10']].concat([5,6,7,8].map(m=>[Date.UTC(y0,m,1),`${m+1}月`]),[[sEnd(y0),'9/30']]).map(([t,l])=>[off(t),l]);
   if(tmode){ xmin=0; xmax=(sEnd(y0)-sStart(y0))/864e5; let wait=0;
-    for(const s of selected){ const c=trendCurve(s.pid,y0); if(!c){ wait++; continue; } const nm=parcels[s.pid].name;
+    for(const s of selected){ const c=trendCurve(s.pid,y0); if(!c){ wait++; continue; } const nm=selLabel(s.pid);
       if(c.avg.length) series.push({label:`${nm} 稲の年の平均（${c.years.join('・')}）`,color:s.color,dash:'',pts:c.avg});
       else setStatus(`${nm}: 稲の年の推移がまだないか、稲の年が足りません`);
     }
@@ -1251,7 +1320,7 @@ function drawChart(){
       g+=p.rad?`<path d="M${cx},${cy-3.8}l3.8,3.8l-3.8,3.8l-3.8,-3.8z" fill="#fff" stroke="${s.color}" stroke-width="1.4"/>`:p.ls?`<circle cx="${X(p.x).toFixed(1)}" cy="${Y(p.ndvi).toFixed(1)}" r="3" fill="#fff" stroke="${s.color}" stroke-width="1.6"/>`:`<circle cx="${X(p.x).toFixed(1)}" cy="${Y(p.ndvi).toFixed(1)}" r="${p.avg?1.6:2.8}" fill="${s.color}"/>`; hoverPts.push({px:X(p.x),x:p.x,s,p}); } }
   g+=`<line id="hl" x1="0" x2="0" y1="${MT}" y2="${H-MB}" stroke="#1e3a2f" stroke-dasharray="3 3" visibility="hidden"/>`;
   // legend inside svg (so PNG includes it)
-  let lx=ML, ly=H-MB+34; for(const s of series){ const w=s.label.length*13.5+36; if(lx+w>W-MR){lx=ML;ly+=20;} g+=`<line x1="${lx}" x2="${lx+18}" y1="${ly-5}" y2="${ly-5}" stroke="${s.color}" stroke-width="2.5" stroke-dasharray="${s.dash}"/><text x="${lx+22}" y="${ly}" font-size="14" fill="#1e3a2f">${s.label}</text>`; lx+=w; }
+  let lx=ML, ly=H-MB+34; for(const s of series){ const w=s.label.length*13.5+36; if(lx+w>W-MR){lx=ML;ly+=20;} g+=`<line x1="${lx}" x2="${lx+18}" y1="${ly-5}" y2="${ly-5}" stroke="${s.color}" stroke-width="2.5" stroke-dasharray="${s.dash}"/><text x="${lx+22}" y="${ly}" font-size="14" font-weight="700" fill="${s.color}">${s.label}</text>`; lx+=w; }
   if(series.some(s=>s.pts.some(p=>p.rad))){ ly+=20; g+=`<path d="M${ML+9},${ly-9}l4,4l-4,4l-4,-4z" fill="#fff" stroke="#4c5a52" stroke-width="1.4"/><text x="${ML+22}" y="${ly}" font-size="13" fill="#4c5a52">ひし形はレーダー（Sentinel-1）からの推定</text>`; }
   if(series.some(s=>s.pts.some(p=>p.prov))){ ly+=20; g+=`<circle cx="${ML+9}" cy="${ly-5}" r="6" fill="none" stroke="#1e3a2f" stroke-width="1.2" stroke-dasharray="2 2"/><text x="${ML+22}" y="${ly}" font-size="13" fill="#4c5a52">点線の輪は速報（あとで変わることがあります。赤はもやの疑い）</text>`; }
   if(series.some(s=>s.pts.some(p=>p.ls))){ ly+=20; g+=`<circle cx="${ML+9}" cy="${ly-5}" r="3.5" fill="#fff" stroke="#4c5a52" stroke-width="1.6"/><text x="${ML+22}" y="${ly}" font-size="13" fill="#4c5a52">白抜きの点は Landsat（30m画素）</text>`; }
@@ -1280,7 +1349,7 @@ function renderSummary(){
   t.innerHTML='<tr><th>田んぼ</th><th class="num">直近</th><th>日付</th><th class="num">今年の最大</th><th>日付</th>'+(nb&&nb.n?'<th class="num">近隣との差(直近)</th>':'')+'</tr>'+selected.map(s=>{
     const ser=seriesOf(s.pid).filter(p=>!p.rad); const last=ser[ser.length-1]; const y=allDates.length?allDates[allDates.length-1].slice(0,4):''; const yr=ser.filter(p=>p.date.startsWith(y)); const mx=yr.length?yr.reduce((a,b)=>b.ndvi>a.ndvi?b:a):null;
     let nbd=''; if(nb&&nb.n&&last){ const q=nb.pts.find(p=>p.date===last.date); nbd=q?`<td class="num" style="color:${last.ndvi-q.ndvi>=0?'var(--accent)':'var(--warn)'}">${(last.ndvi-q.ndvi>=0?'+':'')+(last.ndvi-q.ndvi).toFixed(2)}</td>`:'<td class="num">—</td>'; }
-    return `<tr><td><i style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${s.color};margin-right:6px"></i>${parcels[s.pid].name}</td><td class="num">${last?last.ndvi.toFixed(2):'—'}</td><td>${last?fmtD(last.date):''}</td><td class="num">${mx?mx.ndvi.toFixed(2):'—'}</td><td>${mx?fmtD(mx.date):''}</td>${nbd}</tr>`; }).join('');
+    return `<tr><td><i style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${s.color};margin-right:6px"></i><span style="color:${s.color};font-weight:700">${selLabel(s.pid)}</span></td><td class="num">${last?last.ndvi.toFixed(2):'—'}</td><td>${last?fmtD(last.date):''}</td><td class="num">${mx?mx.ndvi.toFixed(2):'—'}</td><td>${mx?fmtD(mx.date):''}</td>${nbd}</tr>`; }).join('');
 }
 
 // ---------- exclusions ----------
