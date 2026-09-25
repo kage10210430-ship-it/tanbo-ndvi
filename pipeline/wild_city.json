@@ -1,0 +1,23 @@
+{
+  "note": "市町の鳥獣被害防止計画の「被害の現状／被害の軽減目標の現状値」に載っている、農作物被害の合計（被害額 千円・被害面積 ha）の最新の年。キーが複数の市町コードのものは、市町をまとめた計画の合計。pref は県全体の [被害額 千円, 被害面積 ha]（各市町の報告の集計）",
+  "pref_src": "福井県「有害鳥獣による農作物被害状況」（R8.6公表） https://www.pref.fukui.lg.jp/doc/021500/choujyugai/cyoujyuugai_d/fil/R7higai.pdf",
+  "pref": {"R4": [96675, 118.6], "R5": [130228, 158.3], "R6": [190985, 184.4], "R7": [178208, 155.4]},
+  "m": {
+    "18201": {"y": "R7", "yen": 18353, "ha": 18.3, "src": "福井市鳥獣被害防止計画（R8〜R10）",
+              "url": "https://www.city.fukui.lg.jp/sigoto/nourin/choujyu/boushikeikaku_d/fil/higaiboushikeikakuR8-10.pdf"},
+    "18205": {"y": "R7", "yen": 3054, "ha": 6.06, "src": "大野市鳥獣被害防止計画（R8〜R10）", "memo": "シカの水稲など「不明（被害はあり）」の分は入っていない",
+              "url": "https://www.city.ono.fukui.jp/sangyo/noringyo/choujugai/higaibousikeikaku.files/0004_20260917.pdf"},
+    "18207": {"y": "R7", "yen": 2528, "ha": 2.46, "src": "鯖江市鳥獣被害防止計画（R8〜R10）",
+              "url": "https://www.city.sabae.fukui.jp/anzen_anshin/chojuhigaitaisaku/keikaku/higaibousi/keikaku-kousin.files/R8-10_boushikeikaku6.pdf.pdf"},
+    "18208": {"y": "R7", "yen": 7784, "ha": 7.71, "src": "あわら市鳥獣被害防止計画（R8〜R10）",
+              "url": "https://www.city.awara.lg.jp/mokuteki/industry/industry03/industry0304/p010842_d/fil/boushikeikaku7ki.pdf"},
+    "18209": {"y": "R6", "yen": 31868, "ha": 31.79, "src": "越前市鳥獣被害防止計画（R5〜R9, R7改訂）",
+              "url": "https://www.city.echizen.lg.jp/office/kankyounourin/030/yugaityojyu/tyozyuhigaibousikeikaku/tyozyuhigaibousikeikaku_d/fil/R7plan.pdf"},
+    "18210": {"y": "R5", "yen": 5295, "ha": 14.43, "src": "坂井市鳥獣被害防止計画（R6〜R8）",
+              "url": "https://www.city.fukui-sakai.lg.jp/nogyoshinko/bouhan-bosai/bosai/yobou/documents/tyoujyuuhigaibousikeikaku.pdf"},
+    "18404": {"y": "R7", "yen": 27843, "ha": 20.79, "src": "南越前町鳥獣被害防止計画（R8〜R10）",
+              "url": "https://www.town.minamiechizen.lg.jp/kurasi/104/norin_suisan/cyo_jyu/p002610_d/fil/keikakuR8-R10.pdf"},
+    "18202,18204,18442,18481,18483,18501": {"y": "R4", "yen": 39163, "ha": 37.03, "src": "嶺南地域鳥獣被害防止計画（R5〜R7, R6改訂）",
+              "url": "https://www1.city.obama.fukui.jp/shigoto/shigoto-sangyo/chojugaitaisaku/613_d/fil/z-63.pdf"}
+  }
+}
