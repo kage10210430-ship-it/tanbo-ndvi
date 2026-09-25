@@ -1082,8 +1082,8 @@ function buildCurve(pid,r,h,y0){
 // 100点満点: 広さ30・生育のそろい20・形15・深い所の少なさ10・例年の旺盛さ15・年ごとの安定10。獣害の起きやすさで最大20点を引く
 // 形（cells/<id>/shape.json）: 同じ広さの 1:3 の長方形と比べた機械作業のロス（旋回・鋭角の隅の切り返しと手作業）と畦畔の長さ
 //   形の点 = 15 ×（1 − (0.7×ロス/20% + 0.3×畦畔の増え/40%)）
-// 区切りは県全体の稲の田（約12万枚）で S 5%・A 20%・B 50%・C 20%・D 5% になるように（獣害の減点の前）
-const RANK_CUT=[[82,'S','#b8860b'],[72,'A','#2e8b3a'],[51,'B','#1a73e8'],[36,'C','#e8710a'],[-1e9,'D','#d93025']];
+// 区切りは県全体の稲の田（約12万枚）で、獣害の減点のあとの点が S 6%・A 20%・B 50%・C 20%・D 5% になるように
+const RANK_CUT=[[81,'S','#b8860b'],[70,'A','#2e8b3a'],[45,'B','#1a73e8'],[27,'C','#e8710a'],[-1e9,'D','#d93025']];
 const shapeCache={};
 function shapeLoad(cell){ if(!(cell in shapeCache)) shapeCache[cell]=fetch(`${DATA}cells/${cell}/shape.json`).then(r=>r.ok?r.json():null).catch(()=>null); return shapeCache[cell]; }
 const cl01=x=>Math.max(0,Math.min(1,x));
@@ -1101,8 +1101,9 @@ function rankParts(pid,r,t,sh){   // t = drawTrend の結果, sh = shape.json �
 }
 // 獣害の起きやすさ: cells/<id>/wild.json（ESA WorldCover の森と筆ポリゴンから）
 //   [f30, f100, f200, dirs, paddy] = 田の縁から 0〜30m・30〜100m・100〜200m の森の割合（%）, 200m以内に森がある方位（16方位のビット）, 周り300mの田の割合（%）
-//   近さ = 0.5×f30 + 0.3×f100 + 0.2×f200（0.5 で満点）, 囲まれ = 森がある方位の数（1〜8方位）, 孤立 = 周りの田 60%→0 〜 10%→1
-//   危なさ R = 0.55×近さ + 0.25×囲まれ + 0.20×孤立（0〜1）→ R×20 点を引く
+//   近さ = 0.6×f30 + 0.4×f100（40% で満点。森にじかに接しているかを重く見る）, 囲まれ = 森がある方位の数（4方位から、12方位で満点）,
+//   孤立 = 周りの田 40%→0 〜 5%→1。危なさ R = 0.6×近さ + 0.25×囲まれ + 0.15×孤立（0〜1）→ R×20 点を引く
+//   （県全体では 半分の田が2点以下、4枚に1枚が11点以上。平野の真ん中はほぼ0、谷あい・山すその田が大きい）
 const wildCache={};
 function wildLoad(cell){ if(!(cell in wildCache)) wildCache[cell]=fetch(`${DATA}cells/${cell}/wild.json`).then(r=>r.ok?r.json():null).catch(()=>null); return wildCache[cell]; }
 const DIR16=['北','北北東','北東','東北東','東','東南東','南東','南南東','南','南南西','南西','西南西','西','西北西','北西','北北西'];
@@ -1115,10 +1116,11 @@ function dirSpans(mask){   // 森がある方位のまとまり（例: 「北西
 async function wildRisk(pid){
   const w=await wildLoad(parcels[pid].cell), row=w&&w.p&&w.p[pid]; if(!row) return {ok:false,pen:0};
   const [f30,f100,f200,mask,pad]=row, ndir=[...Array(16).keys()].filter(k=>(mask>>k)&1).length;
-  const near=cl01((0.5*f30+0.3*f100+0.2*f200)/100/0.5), encl=cl01((ndir-1)/7), iso=cl01((60-pad)/50);
-  const R=cl01(0.55*near+0.25*encl+0.20*iso), pen=Math.round(20*R), sp=dirSpans(mask).slice(0,2).join('・'), t=[];
-  if(f30>=20) t.push(`${sp||'近く'}側が森に接し（30m以内の森 ${f30}%）`); else if(f100>=20) t.push(`${sp||'近く'}側100m以内に森があり`); else if(f200>=20) t.push(`${sp||'近く'}側200m以内に森があり`);
-  if(ndir>=6) t.push(`森に${ndir}方位を囲まれ`);
+  const near=cl01((0.6*f30+0.4*f100)/100/0.4), encl=cl01((ndir-3)/9), iso=cl01((40-pad)/35);
+  const R=cl01(0.6*near+0.25*encl+0.15*iso), pen=Math.round(20*R), sp=dirSpans(mask).slice(0,2).join('・'), t=[];
+  if(mask===0xffff) t.push(`四方を森に囲まれ（30m以内の森 ${f30}%）`);
+  else { if(f30>=20) t.push(`${sp||'近く'}側が森に接し（30m以内の森 ${f30}%）`); else if(f100>=20) t.push(`${sp||'近く'}側100m以内に森があり`); else if(f200>=20) t.push(`${sp||'近く'}側200m以内に森があり`);
+    if(ndir>=6) t.push(`森に${ndir}方位を囲まれ`); }
   if(pad<40) t.push(`周り300mの田は${pad}%と少なく`);
   return {ok:true,pen,R,text:t.length?t.join('、')+'、獣害に注意です':''};
 }
