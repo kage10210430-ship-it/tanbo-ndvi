@@ -33,7 +33,7 @@ cloud_score_min: 0.6      # Cloud Score+ の晴れ度（0〜1）。これ以上�
 landsat: true             # Landsat 8/9（NASA HLS, 30m）も使う（観測を増やす）
 landsat_min_pixels: 2     # Landsat の30m画素がこれ未満しか入らない小さい区画には使わない
 radar: true               # Sentinel-1 レーダー（雲を通す）も使う。表示では晴れた日の NDVI から換算した推定値
-radar_window: ["05-01", "08-10"]   # レーダーを計算する時期（各年）。表示は 5/10〜7/31
+radar_window: ["04-15", "08-10"]   # レーダーを計算する時期（各年）。4月下旬の代掻き・水張りから。表示は 5/10〜7/31
 pixel_maps: true          # 圃場内マップ（10m画素ごとの NDVI）を作る
 pixel_window: ["05-10", "09-30"]   # 圃場内マップを作る期間（今年と昨年）
 trend_maps: true          # 生育傾向マップ（稲の年だけを重ねた、田の中の毎年の強い・弱い）を作る

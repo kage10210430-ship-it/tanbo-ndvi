@@ -20,7 +20,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: 道具
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils tesseract-ocr tesseract-ocr-jpn >/dev/null
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils tesseract-ocr tesseract-ocr-jpn >/dev/null
+          pip install -q openpyxl xlrd
       - name: 取ってくる
         env:
           URLS: ${{ inputs.urls }}
@@ -41,6 +43,27 @@ jobs:
                   for g in $(ls $f.p*.pgm | head -n 2); do tesseract $g - -l jpn --psm 4 2>/dev/null; done; } > $f.txt
               fi
               sed 's/[[:space:]]*$//' $f.txt | grep -v '^$' | head -n 1500
+            elif head -c 4 $f.bin | grep -q 'PK' || head -c 4 $f.bin | od -An -tx1 | grep -q 'd0 cf 11 e0'; then   # Excel（xlsx / xls）は表を文字にする
+              python3 - "$f.bin" <<'PY'
+          import sys, shutil
+          p = sys.argv[1]; n = 0
+          if open(p, "rb").read(2) == b"PK":
+              import openpyxl
+              shutil.copy(p, p + ".xlsx")
+              wb = openpyxl.load_workbook(p + ".xlsx", read_only=True, data_only=True)
+              sheets = [(ws.title, ws.iter_rows(values_only=True)) for ws in wb.worksheets]
+          else:
+              import xlrd
+              wb = xlrd.open_workbook(p)
+              sheets = [(sh.name, (sh.row_values(i) for i in range(sh.nrows))) for sh in wb.sheets()]
+          for name, rows in sheets:
+              print("## SHEET", name)
+              for r in rows:
+                  cells = ["" if v is None else str(v).strip() for v in r]
+                  if any(cells):
+                      print("\t".join(cells)); n += 1
+                  if n > 3000: break
+          PY
             else python3 - "$f.bin" "$u" <<'PY'
           import sys, re, html
           from urllib.parse import urljoin
@@ -49,7 +72,7 @@ jobs:
           t = b.decode(enc, "replace")
           for h, a in re.findall(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', t, re.S | re.I):
               a = re.sub(r"<[^>]+>|\s+", " ", a).strip()
-              if re.search(r"\.(pdf|xlsx?|csv)$", h, re.I) or re.search("鳥獣|獣害|被害|計画", a):
+              if re.search(r"\.(pdf|xlsx?|csv)$|file-download|statInfId", h, re.I) or re.search("鳥獣|獣害|被害|計画|福井|市町村別|作付|収穫量", a):
                   print("LINK", urljoin(sys.argv[2], html.unescape(h)), a[:80])
           t = re.sub(r"(?is)<(script|style|head)[^>]*>.*?</\1>", " ", t)
           t = html.unescape(re.sub(r"<[^>]+>", "\n", t))

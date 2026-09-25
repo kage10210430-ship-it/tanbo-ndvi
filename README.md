@@ -22,6 +22,8 @@
            ├ px_<年>.png/json （圃場内マップ: 晴れた日の10m画素のNDVI）
            ├ trend.png/json   （生育傾向マップ: 年ごとの作物の手がかりと、6月ごろ・8月ごろの田の中の差）
            ├ hist.json        （生育傾向のグラフ用: ndvi.json より前の年の 5/10〜9/30 の区画平均。形式は ndvi.json と同じ）
+           ├ spring.json / pre.json / post.json （ndvi.json より前の年の 4/15〜6/10・3/1〜4/14・10〜11月。稲の見分け用）
+           ├ radar.json / hist_ls.json （ndvi.json より前の年のレーダー VH 4/15〜8/10・Landsat 4/15〜9/30。稲の見分け用）
            └ ndvi.json        （観測日 × 区画の NDVI と有効画素率。50%未満の観測は保存しない）
                │
                ▼
@@ -109,7 +111,7 @@ Actions → `weekly-ndvi` → **Run workflow**。初回は過去24か月分を�
 | `cloud_score_min` | 雲判定 Cloud Score+ の晴れ度（0〜1）。これ以上の画素だけ使う。変えると次回の更新で全期間を計算し直す |
 | `landsat` | Landsat 8/9（NASA HLS, 30m）も使う。Sentinel-2 がない日の観測を補う（グラフでは白抜きの点） |
 | `landsat_min_pixels` | Landsat の30m画素がこれ未満しか入らない小さい区画には Landsat を使わない |
-| `radar` | Sentinel-1 レーダー（雲を通す）も使う。指標は VH の後方散乱（dB）。地図では範囲ごとに晴れた日の NDVI との関係から推定 NDVI に換算し、5/10〜7/31 の空白を埋める（グラフではひし形の点） |
+| `radar` | Sentinel-1 レーダー（雲を通す）も使う。指標は VH の後方散乱（区画の中央値、dB）。地図では範囲ごとに晴れた日の NDVI との関係から推定 NDVI に換算し、5/10〜7/31 の空白を埋める（グラフではひし形の点） |
 | `radar_window` | レーダーを計算する時期（月-日、各年） |
 | `pixel_maps` | 圃場内マップ（10m画素ごとの NDVI）を作る。地図の「塗り方」で圃場内（絶対・相対）を選ぶと、選んだ田んぼの中を色分けする |
 | `pixel_window` | 圃場内マップを作る期間（月-日）。今年と昨年の分を作る |
