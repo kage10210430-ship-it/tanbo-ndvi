@@ -875,7 +875,7 @@ function loadPackage(p, label){
     style:f=>({color:'#fff',weight:1,opacity:.8,fillColor:'#888',fillOpacity:.35}),
     onEachFeature:(f,l)=>{ const pid=String(f.properties.pid??f.id??f.properties.name); f.properties.pid=pid;
       parcels[pid]={feature:f,layer:l,centroid:centroid(f.geometry),name:f.properties.name||pid,crop:f.properties.crop||''};
-      l.on('click',()=>toggleSelect(pid)); l.bindTooltip(()=>tipText(pid),{sticky:true,direction:'top'}); }
+      l.on('click',()=>toggleSelect(pid)); }
   }).addTo(map);
   if(feats.length) map.fitBounds(geoLayer.getBounds().pad(0.15));
   allDates=[...new Set(Object.values(p.series||{}).flat().map(r=>r[0]))].sort();
@@ -884,7 +884,6 @@ function loadPackage(p, label){
   document.getElementById('foot').textContent=(p.meta?.source?'データ: '+p.meta.source+'。':'')+(p.meta?.attribution||'Contains modified Copernicus Sentinel data')+'。地図: 国土地理院。区画: 農林水産省 筆ポリゴン。NDVIは10m画素の区画平均で、0.8〜0.9で頭打ちになります。';
   buildColorDates(); refresh();
 }
-function tipText(pid){ const s=seriesOf(pid).filter(p=>!p.rad); const last=s[s.length-1]; return `${selLabel(pid)}${parcels[pid].crop?' '+parcels[pid].crop:''}<br>${last?'直近 '+last.date+'：'+last.ndvi.toFixed(2):'データなし'}`; }
 
 // ---------- data access ----------
 function thr(){ return (+document.getElementById('thr').value||70)/100; }
@@ -1427,7 +1426,7 @@ async function boot(){
   pkg={meta:{name:'',source:index.source||'Sentinel-2 L2A',attribution:'Contains modified Copernicus Sentinel data'},parcels:{type:'FeatureCollection',features:[]},series:{},radar:{}};
   geoLayer=L.geoJSON([], {style:()=>({color:'#fff',weight:1,opacity:.8,fillColor:'#888',fillOpacity:.35}),
     onEachFeature:(f,l)=>{ const pid=String(f.properties.pid); parcels[pid]={feature:f,layer:l,centroid:centroid(f.geometry),name:f.properties.name||pid.slice(0,8),crop:''};
-      l.on('click',()=>toggleSelect(pid)); l.bindTooltip(()=>tipText(pid),{sticky:true,direction:'top'}); } }).addTo(map);
+      l.on('click',()=>toggleSelect(pid)); } }).addTo(map);
   const jst=iso=>{ if(!iso) return ''; const d=new Date(Date.parse(iso)+9*3600e3); return `${d.getUTCMonth()+1}/${d.getUTCDate()} ${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}`; };
   const md=x=>x?`${+x.slice(5,7)}/${+x.slice(8,10)}`:'', LT=index.latest||{}, chk=index.checked||index.updated||'';
   document.getElementById('meta').textContent=`${index.n_parcels?.toLocaleString()||''}区画`+(LT.s2?` / 最新の撮影 Sentinel-2 ${md(LT.s2)}${LT.ls?'・Landsat '+md(LT.ls):''}`:'')+` / 更新 ${jst(index.updated)}${index.checked?'・確認 '+jst(index.checked):''}`;
