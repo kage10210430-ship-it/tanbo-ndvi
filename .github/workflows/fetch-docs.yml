@@ -35,8 +35,10 @@ jobs:
             if head -c 5 $f.bin | grep -q '%PDF'; then
               pdftotext -layout $f.bin $f.txt || true
               if [ "$(tr -d '[:space:][:digit:]' < $f.txt | wc -c)" -lt 300 ]; then   # 画像だけの PDF は文字を読み取る（はじめの8ページ）
-                echo "（画像の PDF なので OCR）"; pdftoppm -r 250 -l 8 -gray $f.bin $f.p
-                for g in $f.p*.pgm; do tesseract $g - -l jpn --psm 6 2>/dev/null; done > $f.txt
+                echo "（画像の PDF なので OCR）"; pdftoppm -r 300 -l 8 -gray $f.bin $f.p
+                { for g in $f.p*.pgm; do tesseract $g - -l jpn --psm 6 2>/dev/null; done
+                  echo "（はじめの2ページを別の読み方でもう一度）"
+                  for g in $(ls $f.p*.pgm | head -n 2); do tesseract $g - -l jpn --psm 4 2>/dev/null; done; } > $f.txt
               fi
               sed 's/[[:space:]]*$//' $f.txt | grep -v '^$' | head -n 1500
             else python3 - "$f.bin" "$u" <<'PY'

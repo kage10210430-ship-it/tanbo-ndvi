@@ -1,9 +1,4 @@
 # fetch-docs ワークフローで取ってくる資料（市町ごとの鳥獣被害の数字を探す）
+https://www1.city.obama.fukui.jp/shigoto/shigoto-sangyo/chojugaitaisaku/613_d/fil/z-63.pdf
 https://www.city.fukui.lg.jp/sigoto/nourin/choujyu/boushikeikaku_d/fil/higaiboushikeikakuR8-10.pdf
-https://www.city.fukui-sakai.lg.jp/nogyoshinko/bouhan-bosai/bosai/yobou/documents/tyoujyuuhigaibousikeikaku.pdf
-https://www.city.awara.lg.jp/mokuteki/industry/industry03/industry0304/p010842_d/fil/boushikeikaku7ki.pdf
-https://www.town.minamiechizen.lg.jp/kurasi/104/norin_suisan/cyo_jyu/p002610_d/fil/keikakuR8-R10.pdf
-https://www.city.ono.fukui.jp/sangyo/noringyo/choujugai/higaibousikeikaku.files/0004_20260917.pdf
-https://www.town.eiheiji.lg.jp/200/300/313/p003013_d/fil/6.pdf
-https://www1.city.obama.fukui.jp/shigoto/shigoto-sangyo/chojugaitaisaku/613.html
-https://www.town.echizen.fukui.jp/chousei/11/05/p008269.html
+https://www.town.eiheiji.lg.jp/200/300/313/p003013.html
