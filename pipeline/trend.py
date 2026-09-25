@@ -47,6 +47,11 @@ MIN_INNER_PX = 8
 DEFAULT_WINDOWS = {"e": ["06-01", "07-05"], "l": ["07-20", "08-20"]}
 HIST_WINDOW = ("05-10", "10-01")    # 過去の年の推移（グラフ用）を取る期間（終わりの日は含まない）
 SPRING_WINDOW = ("04-15", "06-11")  # 春の田起こし・代掻き・田植え（休耕の見分け用）を見る期間。稲ならこの間に土か水が見えて NDVI が下がる
+# 稲の見分け（pipeline/crop.py）用に、ndvi.json より前の年にも取る期間（終わりの日は含まない）
+PRE_WINDOW = ("03-01", "04-15")     # 春先: 麦（冬から緑）と草・春起こしの見分け
+POST_WINDOW = ("10-01", "12-01")    # 秋: 晩生の稲の刈り取り、大豆・ソバの収穫、稲のあとの麦まき
+RADAR_HIST_WINDOW = ("04-15", "08-11")   # レーダー VH: 代掻き・田植えの水張りの時期（config の radar_window と同じ）
+LS_HIST_WINDOW = ("04-15", "10-01")      # Landsat: 梅雨の晴れ間を増やす
 
 
 def trend_years(cfg, today):
@@ -278,9 +283,10 @@ def hist_years(cfg, today, nd, window=HIST_WINDOW):
     return [y for y in trend_years(cfg, today) if f"{y}-{window[0]}" < first]
 
 
-def update_hist(backend, cfg, data_dir, cell, today, mask, log, deadline=None, fname="hist.json", window=HIST_WINDOW, name="過去の推移"):
+def update_hist(backend, cfg, data_dir, cell, today, mask, log, deadline=None, fname="hist.json", window=HIST_WINDOW, name="過去の推移", src="s2"):
     """過去の年（ndvi.json より前）の 5/10〜9/30 の区画平均 NDVI を hist.json に足す（生育傾向のグラフ用）。
     fname="spring.json", window=SPRING_WINDOW なら、4/15〜6/10（休耕の見分け用）を spring.json に足す。
+    src="s1"（レーダー VH）・"ls"（Landsat）も同じように取れる（キーは ndvi.json と同じ rdates/rp・ldates/lp）。
     形式は ndvi.json と同じ v2 に "years"（済んだ年）を足したもの。作った年数を返す"""
     from update_ndvi import update_source, load_full
     cdir = os.path.join(data_dir, "cells", cell["id"])
@@ -289,14 +295,16 @@ def update_hist(backend, cfg, data_dir, cell, today, mask, log, deadline=None, f
         return 0
     want = hist_years(cfg, today, read_json(os.path.join(cdir, "ndvi.json")), window)
     h = read_json(os.path.join(cdir, fname)) or {}
-    if h.get("v") != 2 or h.get("mask") != mask:
-        h = {"v": 2, "mask": mask, "dates": [], "p": {}, "years": []}
+    from update_ndvi import SOURCES
+    kd, kp = SOURCES[src]["dates"], SOURCES[src]["p"]
+    if h.get("v") != 2 or h.get("mask") != mask or kd not in h:
+        h = {"v": 2, "mask": mask, kd: [], kp: {}, "years": []}
     todo = [y for y in want if y not in h["years"]]
     full = load_full(cdir); made = []
     for y in todo:
         if deadline and time.time() > deadline:
             break
-        update_source(backend, cfg, cdir, fname, h, cell, inner, full, "s2", f"{y}-{window[0]}", f"{y}-{window[1]}")
+        update_source(backend, cfg, cdir, fname, h, cell, inner, full, src, f"{y}-{window[0]}", f"{y}-{window[1]}")
         h["years"] = sorted(set(h["years"]) | {y}); made.append(y)
         write_json(os.path.join(cdir, fname), h)
     if made:
@@ -394,18 +402,28 @@ def main():
             # 過去の年（ndvi.json より前）の区画ごとの NDVI。GEE のときだけ
             #   spring.json: 4/15〜6/10（春の田起こし・代掻きが見えるか。休耕の年を稲と見分ける）
             #   hist.json:   5/10〜9/30（生育傾向のグラフ用）
+            #   radar.json:  4/15〜8/10 のレーダー VH、post.json: 10〜11月、pre.json: 3/1〜4/14、hist_ls.json: Landsat（稲の見分け用）
+            from update_ndvi import RADAR_MASK, LANDSAT_MASK
             mid = mask_id(cfg)
-            for fname, window, name in (("spring.json", SPRING_WINDOW, "春の田起こし"), ("hist.json", HIST_WINDOW, "過去の推移")):
+            for fname, window, name, srcx, fmask in (("spring.json", SPRING_WINDOW, "春の田起こし", "s2", mid),
+                                                     ("hist.json", HIST_WINDOW, "過去の推移", "s2", mid),
+                                                     ("radar.json", RADAR_HIST_WINDOW, "過去のレーダー", "s1", RADAR_MASK),
+                                                     ("post.json", POST_WINDOW, "過去の秋", "s2", mid),
+                                                     ("pre.json", PRE_WINDOW, "過去の春先", "s2", mid),
+                                                     ("hist_ls.json", LS_HIST_WINDOW, "過去の Landsat", "ls", LANDSAT_MASK)):
                 if args.backend != "gee" or limit - (time.time() - t2) <= 60:
                     break
-                def hneed(c, fname=fname, window=window):
+                if srcx == "s1" and not cfg.get("radar") or srcx == "ls" and not cfg.get("landsat"):
+                    continue
+                def hneed(c, fname=fname, window=window, fmask=fmask):
                     cdir = os.path.join(data_dir, "cells", c["id"])
                     h = read_json(os.path.join(cdir, fname)) or {}
-                    return not (h.get("v") == 2 and h.get("mask") == mid and
+                    return not (h.get("v") == 2 and h.get("mask") == fmask and
                                 set(hist_years(cfg, today, read_json(os.path.join(cdir, "ndvi.json")), window)) <= set(h.get("years", [])))
                 try:
                     hm = run_all(src, cfg, data_dir, cells, today, mid, log, limit - (time.time() - t2), args.workers,
-                                 task=lambda c, dl, fname=fname, window=window, name=name: update_hist(b, cfg, data_dir, c, today, mid, log, dl, fname, window, name),
+                                 task=lambda c, dl, fname=fname, window=window, name=name, srcx=srcx, fmask=fmask:
+                                     update_hist(b, cfg, data_dir, c, today, fmask, log, dl, fname, window, name, srcx),
                                  need=hneed, name=name)
                     made = made + hm if made >= 0 else made
                 except Exception as e:

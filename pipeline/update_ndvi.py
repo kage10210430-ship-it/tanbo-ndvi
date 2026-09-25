@@ -26,7 +26,7 @@ MAX_FEATURES_PER_CALL = 4500      # getInfo の要素数上限(5000)に余裕を
 MIN_PCT = 50                      # これ未満の有効画素率の観測は保存しない
 LOOKBACK_DAYS = 15                # 雲判定データの配信遅れに備えて、直近はもう一度確認する
 LANDSAT_MASK = "hlsl30-fmask"     # Landsat の雲判定の方式（変えると Landsat 分だけ計算し直す）
-RADAR_MASK = "s1-vhdb"            # レーダーの指標（変えるとレーダー分だけ計算し直す）
+RADAR_MASK = "s1-vhdb-med"        # レーダーの指標（変えるとレーダー分だけ計算し直す）。区画の中央値（縁の畦・道路・建物に引っぱられない）
 RECENT_DAYS = 20                  # 毎日の更新で、新しい画像を探す日数
 PROVISIONAL_DAYS = 7              # この日数以内の日は「仮」。同じ日の画像があとから届いたら計算し直す
 SEEN_KEEP_DAYS = 40               # state.json に覚えておく画像の日数
@@ -35,7 +35,7 @@ SEEN_KEEP_DAYS = 40               # state.json に覚えておく画像の日数
 SOURCES = {
     "s2": {"dates": "dates", "p": "p", "scale": 10, "div": 1, "lookback": LOOKBACK_DAYS},
     "ls": {"dates": "ldates", "p": "lp", "scale": 30, "div": 9, "lookback": 30},
-    # Sentinel-1 レーダー: VH の後方散乱（区画平均を dB に。保存は dB×1000）。梅雨の空白を埋めるため、各年の radar_window の間だけ計算する
+    # Sentinel-1 レーダー: VH の後方散乱（区画の中央値を dB に。保存は dB×1000）。水張り・梅雨の空白を見るため、各年の radar_window の間だけ計算する
     "s1": {"dates": "rdates", "p": "rp", "scale": 10, "div": 1, "lookback": 15},
 }
 
@@ -87,7 +87,7 @@ class GEEBackend:
         return ee.ImageCollection("GOOGLE/CLOUD_SCORE_PLUS/V1/S2_HARMONIZED").filterBounds(ee.Geometry.Rectangle(bbox)).filterDate(start, end)
 
     def _prep_s1(self, img):
-        """値は VH（線形。区画で平均してから dB にする）。田植え直後の水面では低く、稲が茂るほど高くなる"""
+        """値は VH（線形。区画の中央値をとってから dB にする）。田植え直後の水面では低く、稲が茂るほど高くなる"""
         ee = self.ee
         return ee.Image(10).pow(img.select("VH").divide(10)).rename("NDVI").copyProperties(img, ["system:time_start"])
 
@@ -127,22 +127,24 @@ class GEEBackend:
         return sorted({dt.datetime.fromtimestamp(t / 1000, dt.timezone.utc).strftime("%Y-%m-%d") for t in ts})
 
     def stats(self, bbox, inner_fc_geojson, dates, src="s2"):
-        """dates（同日は1枚に合成）ごとの区画平均 → {date: {pid: [mean, count]}}"""
+        """dates（同日は1枚に合成）ごとの区画平均（レーダーは中央値）→ {date: {pid: [値, count]}}"""
         ee = self.ee
         fc = ee.FeatureCollection(inner_fc_geojson)
         scale = SOURCES[src]["scale"]
         col = self._col(bbox, dates[0], (dt.date.fromisoformat(dates[-1]) + dt.timedelta(days=1)).isoformat(), src)
         imgs = [self.day(col, d).set("date", d) for d in dates]
         daily = ee.ImageCollection(imgs)
-        reducer = ee.Reducer.mean().combine(ee.Reducer.count(), "", True)
+        stat = "median" if src == "s1" else "mean"
+        reducer = (ee.Reducer.median() if src == "s1" else ee.Reducer.mean()).combine(ee.Reducer.count(), "", True)
         def per_img(img):
             return img.reduceRegions(collection=fc, reducer=reducer, scale=scale).map(lambda f: f.set("date", img.get("date")))
-        table = daily.map(per_img).flatten().filter(ee.Filter.notNull(["mean"]))
-        res = with_retry(lambda: table.select(["pid", "date", "mean", "count"], None, False).getInfo())
+        table = daily.map(per_img).flatten().filter(ee.Filter.notNull([stat]))
+        res = with_retry(lambda: table.select(["pid", "date", stat, "count"], None, False).getInfo())
         out = {d: {} for d in dates}
         for f in res["features"]:
             p = f["properties"]
-            out[p["date"]][p["pid"]] = [round(float(p["mean"]), 3), int(p["count"])]
+            # レーダーの線形の値は 0.001〜0.02 ほどなので、小数3桁に丸めると dB が −20.0/−20.5/−21.0… のとびとびになる。桁を残す
+            out[p["date"]][p["pid"]] = [round(float(p[stat]), 7 if src == "s1" else 3), int(p["count"])]
         return out
 
 
