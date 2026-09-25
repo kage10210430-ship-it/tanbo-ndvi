@@ -1052,6 +1052,9 @@ const RICE_R2=-18, RICE_JUNE_MAX=0.6;
 // その間ずっと NDVI 0.3 以上（草に覆われたまま）の年は、稲の条件に合っても「休耕か草」として除く（2025年の稲と見えた田の約6%。その半分は秋に刈り取りの落ち込みもない）
 // 晴れた日（区画の8割以上）の区画の NDVI は ndvi.json（いつもの系列）、それより前の年は cells/<id>/spring.json から。その年の晴れた日がなければ見分けない
 const SPRING=['04-15','06-10'], SPRING_BARE_MAX=0.3;
+// 刈り取り: 稲なら 8/15〜10/15 に刈り取りで NDVI が下がる（県全体の稲で中央値 0.25）。レーダーが弱く（−18〜−21dB）6月の NDVI が 0.6 以上の年は
+// これまで「その他」にしていたが、春の田起こしも刈り取り（0.45 未満）も見えたら稲にする（育ちが早い年に6月の晴れた日が遅い日ばかりだと 0.6 を超えるため）
+const HARVEST=['08-15','10-15'], HARVEST_MAX=0.45;
 const TREND_MIN_YEARS=2;
 // 生育傾向スコア（画素ごと。その田の平均との差 %、稲の年の平均）
 //   年ごとに E=6月ごろ, L=8月ごろ の差をとり、後半に伸びた所（L≧E）は L、伸びなかった所は (E+L)/2 をその年の値にする
@@ -1062,29 +1065,32 @@ const trCache={};
 function isTrend(m){ return m==='trend'; }
 function trLoad(cell){
   if(!(cell in trCache)) trCache[cell]=Promise.all([fetch(`${DATA}cells/${cell}/trend.json`).then(r=>r.ok?r.json():null),
-      fetch(`${DATA}cells/${cell}/spring.json`).then(r=>r.ok?r.json():null).catch(()=>null)]).then(async([m,sj])=>{
-    if(!m) return null; if(!m.layers.length) return {m,g:null,sj};
+      fetch(`${DATA}cells/${cell}/spring.json`).then(r=>r.ok?r.json():null).catch(()=>null), histLoad(cell)]).then(async([m,sj,hj])=>{
+    if(!m) return null; if(!m.layers.length) return {m,g:null,sj,hj};
     const img=new Image(); img.src=`${DATA}cells/${cell}/trend.png`; await img.decode();
     const c=document.createElement('canvas'); c.width=img.width; c.height=img.height; const x=c.getContext('2d',{willReadFrequently:true}); x.drawImage(img,0,0);
     const d=x.getImageData(0,0,c.width,c.height).data, g=new Uint8Array(c.width*c.height); for(let i=0;i<g.length;i++) g[i]=d[i*4];
-    return {m,g,sj}; }).catch(()=>null);
+    return {m,g,sj,hj}; }).catch(()=>null);
   return trCache[cell]; }
 const spMemo=new Map();
-function springMins(pid,sj){   // {年: 4/15〜6/10 の晴れた日（区画の8割以上）の区画の NDVI のいちばん低い値}
+function seasonMins(pid,r){   // {sp:{年: 4/15〜6/10 の最小}, au:{年: 8/15〜10/15 の最小}}（晴れた日＝区画の8割以上の区画の NDVI）
   if(spMemo.has(pid)) return spMemo.get(pid);
-  const out={}, add=(d,v)=>{ const md=d.slice(5), y=d.slice(0,4); if(md<SPRING[0]||md>SPRING[1]) return; if(!(y in out)||v<out[y]) out[y]=v; };
-  for(const r of pkg.series[pid]||[]) if(r[2]>=0.8-1e-9) add(r[0],r[1]);
-  const a=sj&&sj.p&&sj.p[pid]; if(a) for(let k=0;k<a.length;k+=3) if(a[k+2]>=80) add(sj.dates[a[k]],a[k+1]/1000);
-  if(pkg.series[pid]) spMemo.set(pid,out);   // 区画の系列を読み込む前は覚えない
+  const sp={}, au={}, add=(d,v)=>{ const md=d.slice(5), y=d.slice(0,4), o=md>=SPRING[0]&&md<=SPRING[1]?sp:md>=HARVEST[0]&&md<=HARVEST[1]?au:null;
+    if(o&&(!(y in o)||v<o[y])) o[y]=v; };
+  for(const q of pkg.series[pid]||[]) if(q[2]>=0.8-1e-9) add(q[0],q[1]);
+  for(const j of [r&&r.sj,r&&r.hj]){ const a=j&&j.p&&j.p[pid]; if(a) for(let k=0;k<a.length;k+=3) if(a[k+2]>=80) add(j.dates[a[k]],a[k+1]/1000); }
+  const out={sp,au}; if(pkg.series[pid]) spMemo.set(pid,out);   // 区画の系列を読み込む前は覚えない
   return out; }
-function cropOf(row,sp){   // その年の作物（'稲' / '休'=休耕か草 / '麦' / '他' / ''=わからない）。sp = その年の 4/15〜6/10 の NDVI のいちばん低い値
+function cropOf(row,sp,au){   // その年の作物（'稲' / '休'=休耕か草 / '麦' / '他' / ''=わからない）。sp・au = その年の 4/15〜6/10・8/15〜10/15 の NDVI のいちばん低い値
   if(!row) return ''; const [A,J,R,,me]=row;
   if(A!=null&&A/1000>=MUGI_A) return '麦';
-  if(R!=null&&J!=null&&J/1000>=RICE_J&&(R/10<=RICE_R||(R/10<=RICE_R2&&(me==null||me/1000<RICE_JUNE_MAX)))) return sp!=null&&sp>=SPRING_BARE_MAX?'休':'稲';
+  if(R!=null&&J!=null&&J/1000>=RICE_J&&R/10<=RICE_R2){
+    const tilled=sp!=null&&sp<SPRING_BARE_MAX;
+    if(R/10<=RICE_R||me==null||me/1000<RICE_JUNE_MAX||(tilled&&au!=null&&au<HARVEST_MAX)) return sp!=null&&!tilled?'休':'稲'; }
   return A==null&&J==null&&R==null?'':'他';
 }
 function cropsOf(pid,r){   // {年: 作物}
-  const rows=(r&&r.m.p[pid])||{}, sm=springMins(pid,r&&r.sj), out={}; for(const y in rows) out[y]=cropOf(rows[y],sm[y]); return out; }
+  const rows=(r&&r.m.p[pid])||{}, sm=seasonMins(pid,r), out={}; for(const y in rows) out[y]=cropOf(rows[y],sm.sp[y],sm.au[y]); return out; }
 function drawTrend(pid,r){   // 戻り値 {years: 重ねた稲の年, rice: 稲と見分けた年（画素がない年も）, mugi, other, known: 手がかりがある年の数, span: 目盛り（0なら描けなかった）}
   const {m,g}=r, rows=m.p[pid]||{}, ys=Object.keys(rows).sort(), cr=cropsOf(pid,r), rice=ys.filter(y=>cr[y]==='稲');
   const lay=(y,w)=>rows[y][w==='e'?3:5]>0&&m.layers.includes(y+w)?{k:m.layers.indexOf(y+w),b:Math.max(0.05,rows[y][w==='e'?4:6]/1000)}:null;
