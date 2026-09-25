@@ -1,18 +1,18 @@
-# fetch-docs: 福井県の作付面積の統計（稲の見分けの確かめ用）
+# fetch-docs: 福井県の市町別の作付面積（e-Stat 作物統計 市町村別データ・北陸農政局）
 https://www.maff.go.jp/hokuriku/stat/data/pdf/suitou_20251225.pdf
-https://www.maff.go.jp/hokuriku/stat/data/pdf/suitou_20231226.pdf
-https://www.maff.go.jp/hokuriku/stat/data/suitoukanren.html
-https://www.maff.go.jp/hokuriku/stat/data/r04_harvest_h.html
-https://www.pref.fukui.lg.jp/doc/nourinbu/nouringyogyoudata/nouringyogyoudata_d/fil/02_R7ugoki_fukumai.pdf
-https://www.pref.fukui.lg.jp/doc/nourinbu/nouringyogyoudata/nouringyogyoudata.html
-https://www.pref.fukui.lg.jp/doc/toukei-jouhou/nenkan_r6.html
-https://www.maff.go.jp/hokuriku/stat/data/r06nenpou/r06nenpou.html
-https://www.maff.go.jp/hokuriku/stat/data/r04nenpou/fukui.html
-https://www.maff.go.jp/hokuriku/news/press/seisan/attach/pdf/250523-4.pdf
-https://www.maff.go.jp/hokuriku/news/press/seisan/231013.html
-https://www.maff.go.jp/hokuriku/seisan/kaikaku/sakudou.html
-http://www.f-saisei.jp/pdf/info_250701.pdf
-https://www.maff.go.jp/j/syouan/keikaku/soukatu/attach/pdf/sakudou-27.pdf
-https://www.e-stat.go.jp/stat-search/files?page=1&layout=datalist&lid=000001452283
-https://www.e-stat.go.jp/stat-search/files?page=1&layout=datalist&lid=000001429884
-https://www.e-stat.go.jp/stat-search/files?page=1&layout=datalist&lid=000001478586
+https://www.maff.go.jp/hokuriku/stat/data/attach/xls/r04_harvest_h-2.xlsx
+https://www.e-stat.go.jp/stat-search/file-download?statInfId=000040250172&fileKind=0
+https://www.e-stat.go.jp/stat-search/file-download?statInfId=000040250220&fileKind=0
+https://www.e-stat.go.jp/stat-search/file-download?statInfId=000040250268&fileKind=0
+https://www.e-stat.go.jp/stat-search/file-download?statInfId=000040250316&fileKind=0
+https://www.e-stat.go.jp/stat-search/file-download?statInfId=000040250364&fileKind=0
+https://www.e-stat.go.jp/stat-search/file-download?statInfId=000040145028&fileKind=0
+https://www.e-stat.go.jp/stat-search/file-download?statInfId=000040145076&fileKind=0
+https://www.e-stat.go.jp/stat-search/file-download?statInfId=000040145124&fileKind=0
+https://www.e-stat.go.jp/stat-search/file-download?statInfId=000040145172&fileKind=0
+https://www.e-stat.go.jp/stat-search/file-download?statInfId=000040145220&fileKind=0
+https://www.e-stat.go.jp/stat-search/file-download?statInfId=000040427729&fileKind=0
+https://www.e-stat.go.jp/stat-search/file-download?statInfId=000040427777&fileKind=0
+https://www.e-stat.go.jp/stat-search/file-download?statInfId=000040427825&fileKind=0
+https://www.e-stat.go.jp/stat-search/file-download?statInfId=000040427873&fileKind=0
+https://www.e-stat.go.jp/stat-search/file-download?statInfId=000040427921&fileKind=0

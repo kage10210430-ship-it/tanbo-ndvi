@@ -100,13 +100,22 @@ jobs:
           EE_PROJECT: ${{ secrets.EE_PROJECT }}
         run: python pipeline/trend.py --deadline $(( ${{ steps.gate.outputs.t0 }} + 300 * 60 )) --workers 4
 
+      # 作物の見分け（稲・麦・休耕か草・その他）。全部の田・年を、そろったデータから見分け直す（4コアで4分ほど。Earth Engine は使わない）
+      # 入力が欠けた年は前回の見分けを残す（--prev）。失敗しても前回のファイルが残るだけで、ほかは止めない
+      - name: 作物を見分ける
+        id: crop
+        if: steps.gate.outputs.run == '1'
+        continue-on-error: true
+        timeout-minutes: 30
+        run: python pipeline/crop.py --data site/data --out site/data --prev site/data --no-full --workers 4
+
       - uses: peaceiris/actions-gh-pages@v4
-        if: steps.gate.outputs.run == '1' && steps.trend.outputs.made != '' && steps.trend.outputs.made != '0'
+        if: steps.gate.outputs.run == '1' && (steps.crop.outcome == 'success' || (steps.trend.outputs.made != '' && steps.trend.outputs.made != '0'))
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./site
           force_orphan: true
-          commit_message: 'update trend data'
+          commit_message: 'update trend and crop data'
 
       # GitHub は公開リポジトリで60日間動きがないと定期実行を止めるので、毎回「有効」にし直しておく
       # （手で「無効」にしたときは再び有効にしない。失敗してもジョブは止めず、警告として残す）
