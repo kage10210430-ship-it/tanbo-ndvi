@@ -107,7 +107,7 @@ jobs:
         if: steps.gate.outputs.run == '1'
         continue-on-error: true
         timeout-minutes: 30
-        run: python pipeline/crop.py --data site/data --out site/data --prev site/data --workers 4
+        run: python pipeline/crop.py --data site/data --out site/data --prev site/data --no-full --workers 4
 
       - uses: peaceiris/actions-gh-pages@v4
         if: steps.gate.outputs.run == '1' && (steps.crop.outcome == 'success' || (steps.trend.outputs.made != '' && steps.trend.outputs.made != '0'))

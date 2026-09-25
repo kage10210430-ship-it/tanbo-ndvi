@@ -1294,7 +1294,7 @@ async function renderTrend(gen,mode,note,lbl){
   if(selected.length===1&&one&&one.info){   // 年ごとの見分けと理由
     const ys=Object.keys(one.info).sort(); if(ys.length){
       cw.innerHTML='<div class="cw-h">年ごとの作物の見分け</div>'+ys.map(y=>{ const o=one.info[y], nm={'稲':'稲','麦':'麦','休':'休耕か草','他':'その他','':'わからない'}[o.c]??o.c;
-        return `<div><b>${y}</b> ${nm}${o.p!=null?`<span>（稲 ${o.p}%）</span>`:''} <span>${o.why.replace(/^[^:]*:\s*/,'').replace(/[<>&]/g,'')}</span></div>`; }).join('')
+        return `<div><b>${y}</b> ${nm}${o.p!=null?`<span>（稲らしさ ${o.p}%）</span>`:''} <span>${o.why.replace(/^[^:]*:\s*/,'').replace(/[<>&]/g,'')}</span></div>`; }).join('')
         +(ys.some(y=>one.info[y].prov)?'<div class="cw-n">暫定＝収穫前など、データがそろうと見直します（11月ごろ）</div>':''); } }
 }
 async function renderPx(){
