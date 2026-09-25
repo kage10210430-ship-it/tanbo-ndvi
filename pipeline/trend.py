@@ -14,6 +14,8 @@
      → その年・その時期の「田の中の差」
 稲の年かどうかは表示側（index.html）で決める（しきい値を変えても計算し直さなくてよいように）。
   いまの基準（index.html の cropOf）: 麦 = A≧0.6。稲 = J≧0.5 かつ（R≦−21dB、または R≦−18dB で6月ごろの田の中央値 NDVI<0.6）
+  かつ 4/15〜6/10 に一度は NDVI<0.3（田起こし・代掻き・田植えで土か水が見える）。見えない年は休耕か草として除く
+  （4/15〜6/10 の区画ごとの NDVI は ndvi.json、それより前の年は spring.json）
 
   python pipeline/trend.py --minutes 300 --workers 4
 1セル・1年ずつ保存するので、時間切れで止まっても次回に続きから作る。できあがった年は作り直さない。
@@ -43,6 +45,7 @@ EDGE_PX = (0.8, 0.4)      # 区画の縁からこの画素数（≒8m）以内�
 MIN_INNER_PX = 8
 DEFAULT_WINDOWS = {"e": ["06-01", "07-05"], "l": ["07-20", "08-20"]}
 HIST_WINDOW = ("05-10", "10-01")    # 過去の年の推移（グラフ用）を取る期間（終わりの日は含まない）
+SPRING_WINDOW = ("04-15", "06-11")  # 春の田起こし・代掻き・田植え（休耕の見分け用）を見る期間。稲ならこの間に土か水が見えて NDVI が下がる
 
 
 def trend_years(cfg, today):
@@ -268,22 +271,23 @@ def update_cell(src, cfg, data_dir, cell, today, mask, log, deadline=None):
     return len(made)
 
 
-def hist_years(cfg, today, nd):
-    """hist.json に入れる年: 生育傾向の年のうち、5/10〜9/30 が ndvi.json に入っていない年"""
+def hist_years(cfg, today, nd, window=HIST_WINDOW):
+    """hist.json（spring.json）に入れる年: 生育傾向の年のうち、その期間が ndvi.json に入っていない年"""
     first = (nd or {}).get("dates", [""])[0] if (nd or {}).get("dates") else "9999"
-    return [y for y in trend_years(cfg, today) if f"{y}-{HIST_WINDOW[0]}" < first]
+    return [y for y in trend_years(cfg, today) if f"{y}-{window[0]}" < first]
 
 
-def update_hist(backend, cfg, data_dir, cell, today, mask, log, deadline=None):
+def update_hist(backend, cfg, data_dir, cell, today, mask, log, deadline=None, fname="hist.json", window=HIST_WINDOW, name="過去の推移"):
     """過去の年（ndvi.json より前）の 5/10〜9/30 の区画平均 NDVI を hist.json に足す（生育傾向のグラフ用）。
+    fname="spring.json", window=SPRING_WINDOW なら、4/15〜6/10（休耕の見分け用）を spring.json に足す。
     形式は ndvi.json と同じ v2 に "years"（済んだ年）を足したもの。作った年数を返す"""
     from update_ndvi import update_source, load_full
     cdir = os.path.join(data_dir, "cells", cell["id"])
     inner = read_json(os.path.join(cdir, "inner.geojson"))
     if not inner or not inner.get("features"):
         return 0
-    want = hist_years(cfg, today, read_json(os.path.join(cdir, "ndvi.json")))
-    h = read_json(os.path.join(cdir, "hist.json")) or {}
+    want = hist_years(cfg, today, read_json(os.path.join(cdir, "ndvi.json")), window)
+    h = read_json(os.path.join(cdir, fname)) or {}
     if h.get("v") != 2 or h.get("mask") != mask:
         h = {"v": 2, "mask": mask, "dates": [], "p": {}, "years": []}
     todo = [y for y in want if y not in h["years"]]
@@ -291,11 +295,11 @@ def update_hist(backend, cfg, data_dir, cell, today, mask, log, deadline=None):
     for y in todo:
         if deadline and time.time() > deadline:
             break
-        update_source(backend, cfg, cdir, "hist.json", h, cell, inner, full, "s2", f"{y}-{HIST_WINDOW[0]}", f"{y}-{HIST_WINDOW[1]}")
+        update_source(backend, cfg, cdir, fname, h, cell, inner, full, "s2", f"{y}-{window[0]}", f"{y}-{window[1]}")
         h["years"] = sorted(set(h["years"]) | {y}); made.append(y)
-        write_json(os.path.join(cdir, "hist.json"), h)
+        write_json(os.path.join(cdir, fname), h)
     if made:
-        log(f"{cell['id']}: 過去の推移 {made[0]}" + (f"〜{made[-1]}" if len(made) > 1 else "") + "年")
+        log(f"{cell['id']}: {name} {made[0]}" + (f"〜{made[-1]}" if len(made) > 1 else "") + "年")
     return len(made)
 
 
@@ -386,20 +390,25 @@ def main():
                 made = run_all(src, cfg, data_dir, cells, today, mask_id(cfg), log, limit, args.workers)
             except Exception as e:               # 途中まで作った分は公開する（-1 = 途中で止まった）
                 log(f"生育傾向 エラー {e}"); made = -1
-            # 過去の年の推移（生育傾向のグラフ用）。GEE のときだけ
-            if args.backend == "gee" and limit - (time.time() - t2) > 60:
-                mid = mask_id(cfg)
-                def hneed(c):
+            # 過去の年（ndvi.json より前）の区画ごとの NDVI。GEE のときだけ
+            #   spring.json: 4/15〜6/10（春の田起こし・代掻きが見えるか。休耕の年を稲と見分ける）
+            #   hist.json:   5/10〜9/30（生育傾向のグラフ用）
+            mid = mask_id(cfg)
+            for fname, window, name in (("spring.json", SPRING_WINDOW, "春の田起こし"), ("hist.json", HIST_WINDOW, "過去の推移")):
+                if args.backend != "gee" or limit - (time.time() - t2) <= 60:
+                    break
+                def hneed(c, fname=fname, window=window):
                     cdir = os.path.join(data_dir, "cells", c["id"])
-                    h = read_json(os.path.join(cdir, "hist.json")) or {}
+                    h = read_json(os.path.join(cdir, fname)) or {}
                     return not (h.get("v") == 2 and h.get("mask") == mid and
-                                set(hist_years(cfg, today, read_json(os.path.join(cdir, "ndvi.json")))) <= set(h.get("years", [])))
+                                set(hist_years(cfg, today, read_json(os.path.join(cdir, "ndvi.json")), window)) <= set(h.get("years", [])))
                 try:
                     hm = run_all(src, cfg, data_dir, cells, today, mid, log, limit - (time.time() - t2), args.workers,
-                                 task=lambda c, dl: update_hist(b, cfg, data_dir, c, today, mid, log, dl), need=hneed, name="過去の推移")
+                                 task=lambda c, dl, fname=fname, window=window, name=name: update_hist(b, cfg, data_dir, c, today, mid, log, dl, fname, window, name),
+                                 need=hneed, name=name)
                     made = made + hm if made >= 0 else made
                 except Exception as e:
-                    log(f"過去の推移 エラー {e}"); made = made or -1
+                    log(f"{name} エラー {e}"); made = made or -1
             # 獣害の起きやすさの手がかり（森との接し方・周りの田の割合）。区画の形が変わらなければ1回だけ
             if limit - (time.time() - t2) > 60:
                 import wild
