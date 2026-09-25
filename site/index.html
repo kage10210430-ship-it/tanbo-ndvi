@@ -699,6 +699,9 @@ svg.leaflet-image-layer.leaflet-interactive path {
   .chips{display:flex;flex-wrap:wrap;gap:6px;min-height:30px}
   .chip{display:inline-flex;align-items:center;gap:6px;border:1.5px solid;border-radius:20px;padding:3px 8px 3px 10px;font-size:13px;background:#fff}
   .chip i{width:11px;height:11px;border-radius:50%;display:inline-block}
+  .rankbox{margin:8px 0 4px;display:none} .rankbox .rk{display:flex;gap:10px;align-items:flex-start;padding:6px 0;border-bottom:1px solid var(--grid)}
+  .rankbox .bd{flex:none;width:34px;height:34px;border-radius:6px;color:#fff;font-weight:700;font-size:20px;display:flex;align-items:center;justify-content:center}
+  .rankbox .tx{font-size:13px;line-height:1.5} .rankbox .tx b{font-size:13.5px}
   .chip button{border:0;background:transparent;font-size:15px;cursor:pointer;color:var(--ink2);padding:0 2px;line-height:1}
   .hint{color:var(--ink2);font-size:12.5px}
   .ctl{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;margin:4px 0}
@@ -748,6 +751,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
       <button class="btn small" id="btnClear">すべて解除</button>
       <label style="display:none"><input type="checkbox" id="nbOn">近隣の田の平均も表示</label>
     </div>
+    <div class="rankbox" id="rankBox"></div>
     <h2>推移</h2>
     <div class="ctl" id="modeCtl">
       <select id="mode">
@@ -1030,15 +1034,18 @@ function drawTrend(pid,r){   // 戻り値 {years: 重ねた稲の年, rice: 稲�
   if(!g||yrs.length<TREND_MIN_YEARS) return out;
   const R=pxRegion(pid,m); if(!R) return out; const {c0,r0,cw,ch,inside}=R;
   const at=(o,y,x)=>{ if(!o) return null; const v=g[(o.k*m.h+r0+y)*m.w+c0+x]; return v>0?((v-1)/254*0.6-0.3)/o.b:null; };   // その年のその田の中央値との差（%）
-  const val=new Float32Array(cw*ch).fill(NaN), oks=[]; let nin=0;
-  for(let y=0;y<ch;y++) for(let x=0;x<cw;x++){ if(!inside(c0+x+.5,r0+y+.5)) continue; nin++; let s=0,n=0;
+  const val=new Float32Array(cw*ch).fill(NaN), oks=[], EL=[]; let nin=0;
+  for(let y=0;y<ch;y++) for(let x=0;x<cw;x++){ if(!inside(c0+x+.5,r0+y+.5)) continue; nin++; let s=0,n=0,se=0,ne=0,sl=0,nl=0;
     for(const [,oe,ol] of yrs){ const e=at(oe,y,x), l=at(ol,y,x); if(e==null&&l==null) continue;
-      s+=e==null?l:l==null?e:(l>=e?l:(e+l)/2); n++; }
-    if(n){ val[y*cw+x]=s/n; oks.push(s/n); } }
+      s+=e==null?l:l==null?e:(l>=e?l:(e+l)/2); n++; if(e!=null){se+=e;ne++;} if(l!=null){sl+=l;nl++;} }
+    if(n){ val[y*cw+x]=s/n; oks.push(s/n); if(ne&&nl) EL.push([se/ne,sl/nl]); } }
   if(!nin||oks.length<Math.max(3,nin*0.1)) return out;       // 縁（約8m）は計算に使っていないので、内側に少しでもあれば描く（縁は内側の値でうめる）
   const mean=oks.reduce((a,b)=>a+b,0)/oks.length, devs=oks.map(x=>Math.abs(x-mean)).sort((a,b)=>a-b);
   out.span=Math.max(TREND_MIN_SPAN,devs[Math.floor(0.95*(devs.length-1))]||0);
   pxOverlay(R,m,val,v=>relColor((v-mean)/out.span),mean);
+  const sd=oks.map(x=>x-mean).sort((a,b)=>a-b); out.spread=sd[Math.floor(0.9*(sd.length-1))]-sd[Math.floor(0.1*(sd.length-1))];   // 田の中のばらつき（上下1割を除いた幅）
+  if(EL.length>=3){ const mE=EL.reduce((a,p)=>a+p[0],0)/EL.length, mL=EL.reduce((a,p)=>a+p[1],0)/EL.length;
+    out.deep=EL.filter(([e,l])=>e-mE<=-0.03&&(l-mL)-(e-mE)>=0.04).length/EL.length; } else out.deep=0;   // 前半に出遅れて後半に大きく追いつく所
   return out;
 }
 // ---------- 生育傾向のグラフ（稲の年の 5/10〜9/30 の平均） ----------
@@ -1071,13 +1078,65 @@ function buildCurve(pid,r,h,y0){
   const cur=own.filter(p=>p.t>=s0(y0)&&p.t<=s0(y0)+N*864e5).map(p=>({...p,x:(p.t-s0(y0))/864e5}));
   return {years:used,avg,cur};
 }
+// ---------- 圃場の評価（S〜D） ----------
+// 100点満点: 広さ35・生育のそろい25・深い所の少なさ10・例年の旺盛さ15・年ごとの安定15。山際（獣害の心配）は最大20点を引く
+// 区切りは県全体の稲の田（約12万枚）で S 5%・A 20%・B 50%・C 20%・D 5% になるように（山際の減点の前）
+const RANK_CUT=[[80,'S','#b8860b'],[68,'A','#2e8b3a'],[46,'B','#1a73e8'],[28,'C','#e8710a'],[-1e9,'D','#d93025']];
+const cl01=x=>Math.max(0,Math.min(1,x));
+function polyArea(geom){ const ring=c=>{ const k=Math.cos(c[0][1]*Math.PI/180); let s=0; for(let i=0;i<c.length;i++){ const [x1,y1]=c[i],[x2,y2]=c[(i+1)%c.length]; s+=x1*y2-x2*y1; } return Math.abs(s)/2*111320*k*110540; };
+  return (geom.type==='Polygon'?[geom.coordinates]:geom.coordinates).reduce((a,p)=>a+ring(p[0])-p.slice(1).reduce((b,h)=>b+ring(h),0),0); }
+function rankParts(pid,r,t){   // t = drawTrend の結果
+  const rows=r.m.p[pid]||{}, rice=Object.keys(rows).filter(y=>cropOf(rows[y])==='稲'), mls=rice.map(y=>rows[y][6]).filter(v=>v!=null).map(v=>v/1000);
+  const vig=mls.length?mls.reduce((a,b)=>a+b,0)/mls.length:null;
+  const all=[]; for(const q in r.m.p){ const rs=r.m.p[q], v=Object.keys(rs).filter(y=>cropOf(rs[y])==='稲').map(y=>rs[y][6]).filter(v=>v!=null); if(v.length) all.push(v.reduce((a,b)=>a+b,0)/v.length/1000); }
+  const pct=vig==null||!all.length?0.5:(all.filter(x=>x<vig).length+0.5*all.filter(x=>x===vig).length)/all.length;
+  const sd=mls.length>=2?Math.sqrt(mls.reduce((a,b)=>a+(b-vig)**2,0)/mls.length):null, area=polyArea(parcels[pid].feature.geometry);
+  const pts={area:35*cl01(Math.log(Math.max(area,1)/500)/Math.log(20)), unif:25*cl01((0.15-t.spread)/0.13), deep:10*cl01(1-t.deep/0.4), vig:15*pct, stab:sd==null?7.5:15*cl01((0.08-sd)/0.06)};
+  return {area,spread:t.spread,deep:t.deep,pct,sd,pts,base:Object.values(pts).reduce((a,b)=>a+b,0)};
+}
+// 山際: 国土地理院の標高タイル（10m）で、田の中心から 100〜500m の16方位の標高を見て、急に高くなる所が近いほど減点
+const demCache={};
+function demTile(x,y){ const k=x+'/'+y; if(!(k in demCache)) demCache[k]=new Promise(res=>{ const im=new Image(); im.crossOrigin='anonymous';
+  im.onload=()=>{ try{ const c=document.createElement('canvas'); c.width=256; c.height=256; const g=c.getContext('2d',{willReadFrequently:true}); g.drawImage(im,0,0); res(g.getImageData(0,0,256,256).data); }catch(e){ res(null); } };
+  im.onerror=()=>res(null); im.src=`${gsi}dem_png/14/${x}/${y}.png`; }); return demCache[k]; }
+async function demAt(lat,lon){ const z=14, n=2**z, fx=(lon+180)/360*n, fy=(1-Math.log(Math.tan(lat*Math.PI/180)+1/Math.cos(lat*Math.PI/180))/Math.PI)/2*n;
+  const d=await demTile(Math.floor(fx),Math.floor(fy)); if(!d) return undefined; const i=(Math.floor((fy%1)*256)*256+Math.floor((fx%1)*256))*4, v=d[i]*65536+d[i+1]*256+d[i+2];
+  return v===8388608?null:(v<8388608?v:v-16777216)*0.01; }   // null = 水面など標高なし
+async function mountainPenalty(pid){
+  const [lon,lat]=parcels[pid].centroid, h0=await demAt(lat,lon); if(h0===undefined) return {ok:false}; if(h0===null) return {ok:true,pen:0};
+  const dirs=['北','北北東','北東','東北東','東','東南東','南東','南南東','南','南南西','南西','西南西','西','西北西','北西','北北西'];
+  let best={p:0}; const jobs=[];
+  for(let k=0;k<16;k++) for(const dm of [100,200,300,400,500]){ const a=k*Math.PI/8, la=lat+dm*Math.cos(a)/111320, lo=lon+dm*Math.sin(a)/(111320*Math.cos(lat*Math.PI/180));
+    jobs.push(demAt(la,lo).then(h=>{ if(h==null) return; const rise=h-h0, p=cl01((rise-10)/30)*cl01((600-dm)/500); if(p>best.p) best={p,dir:dirs[k],d:dm,rise:Math.round(rise)}; })); }
+  await Promise.all(jobs); return {ok:true,pen:Math.round(20*best.p),...best};
+}
+function rankText(p,mt){
+  const ha=p.area/10000, size=p.area>=10000?'大きい':p.area>=3000?'中くらいの':'小さめの';
+  const un=p.spread<=0.03?'よくそろっています':p.spread<=0.08?'おおむねそろっています':'ムラが大きめです';
+  const vg=p.pct>=0.7?`旺盛（地区の上位${Math.max(1,Math.round((1-p.pct)*10))}割）`:p.pct<=0.3?`控えめ（地区の下位${Math.max(1,Math.round(p.pct*10))}割）`:'地区の平均くらい';
+  const st=p.sd==null?'':p.sd<=0.025?'、年ごとの差は小さめ':p.sd<=0.05?'':'、年ごとの差は大きめ';
+  const L=[`約${ha<1?ha.toFixed(2):ha.toFixed(1)}haの${size}田で、田の中の生育は${un}。`,`例年の生育は${vg}${st}です。`], ex=[];
+  if(p.deep>=0.15) ex.push([p.deep,`前半に出遅れて後半に追いつく所（田面が深いなど）が田の${Math.round(p.deep*100)}%あります。`]);
+  if(mt&&mt.pen>=3) ex.push([mt.pen/20+0.5,`${mt.dir}側 約${mt.d}mで${mt.rise}m高くなる山際に近く、獣害に注意です（−${mt.pen}点）。`]);
+  ex.sort((a,b)=>b[0]-a[0]); if(ex.length) L.push(ex[0][1]);
+  return L; }
+async function renderRanks(gen,items){   // items: [{pid,color,r,t}]
+  const box=document.getElementById('rankBox'); box.style.display=items.length?'block':'none'; if(!items.length){ box.innerHTML=''; return; }
+  const rows=items.map(it=>({...it,p:rankParts(it.pid,it.r,it.t)}));
+  const draw=()=>{ box.innerHTML='<h2 style="margin:0 0 2px">圃場の評価</h2>'+rows.map(x=>{ const sc=Math.round(x.p.base-(x.mt&&x.mt.pen||0)), rk=RANK_CUT.find(c=>sc>=c[0]);
+    return `<div class="rk"><div class="bd" style="background:${rk[2]}">${rk[1]}</div><div class="tx"><b><i style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${x.color};margin-right:5px"></i>${parcels[x.pid].name}　${sc}点</b><br>${rankText(x.p,x.mt).join('<br>')}${x.mt&&!x.mt.ok?'<br><span class="hint">（標高データが読めず、山際の判定はしていません）</span>':''}</div></div>`; }).join('')
+    +'<div class="hint">広さ35・生育のそろい25・例年の旺盛さ15・年ごとの安定15・深い所の少なさ10（100点）。山際は最大20点を引きます。</div>'; };
+  draw();
+  for(const x of rows){ x.mt=await mountainPenalty(x.pid); if(gen!==pxGen) return; draw(); }
+}
 async function renderTrend(gen,mode,note,lbl){
-  const used=[], spans=[]; let one=null, wait=0, few=0; note.textContent='読み込み中…';
+  const used=[], spans=[], ranked=[]; let one=null, wait=0, few=0; note.textContent='読み込み中…';
   for(const s of selected){ const P=parcels[s.pid]; if(!P||!P.cell){ wait++; continue; }
     const r=await trLoad(P.cell); if(gen!==pxGen) return;
     if(!r){ wait++; continue; }
     const t=drawTrend(s.pid,r); one=t;
-    if(t.span){ used.push(t.years.length); spans.push(t.span); P.layer.setStyle({fillOpacity:0}); P.layer._stk=''; } else few++; }
+    if(t.span){ used.push(t.years.length); spans.push(t.span); ranked.push({pid:s.pid,color:s.color,r,t}); P.layer.setStyle({fillOpacity:0}); P.layer._stk=''; } else few++; }
+  renderRanks(gen,ranked);
   if(spans.length){ const f=x=>Math.round(x*100), a=f(Math.min(...spans)), b=f(Math.max(...spans));
     lbl.innerHTML=`<span>生育弱傾向（−${a===b?a:a+'〜'+b}%）</span><span>${spans.length>1?'田ごとに自動':'この田の中の差'}</span><span>（+${a===b?a:a+'〜'+b}%）生育良傾向</span>`; }
   const msg=[];
@@ -1093,7 +1152,7 @@ async function renderPx(){
   const bar=document.getElementById('lgBar'), lbl=document.getElementById('lgLbl');
   bar.classList.toggle('rel',mode==='rel'||isTrend(mode));
   lbl.innerHTML=mode==='rel'?'<span>その田の平均より低い</span><span>田の中の差</span><span>高い</span>':isTrend(mode)?'<span>生育弱傾向</span><span>稲の年の傾向</span><span>生育良傾向</span>':'<span>低い 0.2</span><span>NDVI</span><span>0.9 高い</span>';
-  pxLayer.clearLayers();
+  pxLayer.clearLayers(); if(!isTrend(mode)||!selected.length||!on){ const b=document.getElementById('rankBox'); b.style.display='none'; b.innerHTML=''; }
   if(!on){ note.textContent=''; return; }
   if(!selected.length){ note.textContent=isTrend(mode)?'田んぼを選ぶと、その中の生育の傾向（稲の年だけを重ねたもの）を色分けします':'田んぼを選ぶと、その中を10m画素で色分けします'; return; }
   if(isTrend(mode)) return renderTrend(gen,mode,note,lbl);
