@@ -400,6 +400,17 @@ def main():
                     made = made + hm if made >= 0 else made
                 except Exception as e:
                     log(f"過去の推移 エラー {e}"); made = made or -1
+            # 獣害の起きやすさの手がかり（森との接し方・周りの田の割合）。区画の形が変わらなければ1回だけ
+            if limit - (time.time() - t2) > 60:
+                import wild
+                wsrc = wild.GEEWild(b, src.px) if args.backend == "gee" else wild.FakeWild()
+                try:
+                    wm = run_all(src, cfg, data_dir, cells, today, mask_id(cfg), log, limit - (time.time() - t2), args.workers,
+                                 task=lambda c, dl: wild.update_cell(wsrc, cfg, data_dir, index, c, log, dl),
+                                 need=lambda c: wild.need(data_dir, c), name="獣害の手がかり")
+                    made = made + wm if made >= 0 else made
+                except Exception as e:
+                    log(f"獣害の手がかり エラー {e}"); made = made or -1
         else:
             log("生育傾向: 残り時間がないので今回は作りません")
     if os.environ.get("GITHUB_OUTPUT"):            # ワークフローで、作った年があるときだけ公開し直すため
