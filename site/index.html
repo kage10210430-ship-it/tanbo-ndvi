@@ -1079,11 +1079,11 @@ function buildCurve(pid,r,h,y0){
   return {years:used,avg,cur};
 }
 // ---------- 圃場の評価（S〜D） ----------
-// 100点満点: 広さ30・生育のそろい25・形15・深い所の少なさ10・例年の旺盛さ10・年ごとの安定10。獣害の起きやすさで最大20点を引く
+// 100点満点: 広さ30・生育のそろい20・形15・深い所の少なさ10・例年の旺盛さ15・年ごとの安定10。獣害の起きやすさで最大20点を引く
 // 形（cells/<id>/shape.json）: 同じ広さの 1:3 の長方形と比べた機械作業のロス（旋回・鋭角の隅の切り返しと手作業）と畦畔の長さ
 //   形の点 = 15 ×（1 − (0.7×ロス/20% + 0.3×畦畔の増え/40%)）
 // 区切りは県全体の稲の田（約12万枚）で S 5%・A 20%・B 50%・C 20%・D 5% になるように（獣害の減点の前）
-const RANK_CUT=[[83,'S','#b8860b'],[73,'A','#2e8b3a'],[52,'B','#1a73e8'],[35,'C','#e8710a'],[-1e9,'D','#d93025']];
+const RANK_CUT=[[82,'S','#b8860b'],[72,'A','#2e8b3a'],[51,'B','#1a73e8'],[36,'C','#e8710a'],[-1e9,'D','#d93025']];
 const shapeCache={};
 function shapeLoad(cell){ if(!(cell in shapeCache)) shapeCache[cell]=fetch(`${DATA}cells/${cell}/shape.json`).then(r=>r.ok?r.json():null).catch(()=>null); return shapeCache[cell]; }
 const cl01=x=>Math.max(0,Math.min(1,x));
@@ -1095,7 +1095,7 @@ function rankParts(pid,r,t,sh){   // t = drawTrend の結果, sh = shape.json �
   const all=[]; for(const q in r.m.p){ const rs=r.m.p[q], v=Object.keys(rs).filter(y=>cropOf(rs[y])==='稲').map(y=>rs[y][6]).filter(v=>v!=null); if(v.length) all.push(v.reduce((a,b)=>a+b,0)/v.length/1000); }
   const pct=vig==null||!all.length?0.5:(all.filter(x=>x<vig).length+0.5*all.filter(x=>x===vig).length)/all.length;
   const sd=mls.length>=2?Math.sqrt(mls.reduce((a,b)=>a+(b-vig)**2,0)/mls.length):null, area=polyArea(parcels[pid].feature.geometry);
-  const pts={area:30*cl01(Math.log(Math.max(area,1)/500)/Math.log(20)), unif:25*cl01((0.15-t.spread)/0.13), deep:10*cl01(1-t.deep/0.4), vig:10*pct, stab:sd==null?5:10*cl01((0.08-sd)/0.06),
+  const pts={area:30*cl01(Math.log(Math.max(area,1)/500)/Math.log(20)), unif:20*cl01((0.15-t.spread)/0.13), deep:10*cl01(1-t.deep/0.4), vig:15*pct, stab:sd==null?5:10*cl01((0.08-sd)/0.06),
     shape:sh?15*(1-cl01(0.7*cl01(sh[1]/20)+0.3*cl01((sh[2]-100)/40))):7.5};
   return {area,spread:t.spread,deep:t.deep,pct,sd,sh,pts,base:Object.values(pts).reduce((a,b)=>a+b,0)};
 }
@@ -1143,7 +1143,7 @@ async function renderRanks(gen,items){   // items: [{pid,color,r,t}]
   const rows=items.map((it,i)=>({...it,p:rankParts(it.pid,it.r,it.t,shs[i]&&shs[i].p&&shs[i].p[it.pid])}));
   const draw=()=>{ box.innerHTML='<h2 style="margin:0 0 2px">圃場の評価</h2>'+rows.map(x=>{ const sc=Math.round(x.p.base-(x.mt&&x.mt.pen||0)), rk=RANK_CUT.find(c=>sc>=c[0]);
     return `<div class="rk"><div class="bd" style="background:${rk[2]}">${rk[1]}</div><div class="tx"><b><i style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${x.color};margin-right:5px"></i>${parcels[x.pid].name}　${sc}点</b><br>${rankText(x.p,x.mt).join('<br>')}${x.mt&&!x.mt.ok?'<br><span class="hint">（獣害の手がかりは準備中のため、減点していません）</span>':''}</div></div>`; }).join('')
-    +'<div class="hint">広さ30・生育のそろい25・形15・例年の旺盛さ10・年ごとの安定10・深い所の少なさ10（100点）。獣害の起きやすさ（森との近さ・森に囲まれ具合・周りの田の少なさ）で最大20点を引きます。</div>'; };
+    +'<div class="hint">広さ30・生育のそろい20・形15・深い所の少なさ10・例年の旺盛さ15・年ごとの安定10（100点）。獣害の起きやすさ（森との近さ・森に囲まれ具合・周りの田の少なさ）で最大20点を引きます。</div>'; };
   draw();
   for(const x of rows){ x.mt=await wildRisk(x.pid); if(gen!==pxGen) return; draw(); }
 }
