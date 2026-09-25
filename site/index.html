@@ -1079,20 +1079,25 @@ function buildCurve(pid,r,h,y0){
   return {years:used,avg,cur};
 }
 // ---------- 圃場の評価（S〜D） ----------
-// 100点満点: 広さ35・生育のそろい25・深い所の少なさ10・例年の旺盛さ15・年ごとの安定15。獣害の起きやすさで最大20点を引く
+// 100点満点: 広さ30・生育のそろい25・形15・深い所の少なさ10・例年の旺盛さ10・年ごとの安定10。獣害の起きやすさで最大20点を引く
+// 形（cells/<id>/shape.json）: 同じ広さの 1:3 の長方形と比べた機械作業のロス（旋回・鋭角の隅の切り返しと手作業）と畦畔の長さ
+//   形の点 = 15 ×（1 − (0.7×ロス/20% + 0.3×畦畔の増え/40%)）
 // 区切りは県全体の稲の田（約12万枚）で S 5%・A 20%・B 50%・C 20%・D 5% になるように（獣害の減点の前）
-const RANK_CUT=[[80,'S','#b8860b'],[68,'A','#2e8b3a'],[46,'B','#1a73e8'],[28,'C','#e8710a'],[-1e9,'D','#d93025']];
+const RANK_CUT=[[83,'S','#b8860b'],[73,'A','#2e8b3a'],[52,'B','#1a73e8'],[35,'C','#e8710a'],[-1e9,'D','#d93025']];
+const shapeCache={};
+function shapeLoad(cell){ if(!(cell in shapeCache)) shapeCache[cell]=fetch(`${DATA}cells/${cell}/shape.json`).then(r=>r.ok?r.json():null).catch(()=>null); return shapeCache[cell]; }
 const cl01=x=>Math.max(0,Math.min(1,x));
 function polyArea(geom){ const ring=c=>{ const k=Math.cos(c[0][1]*Math.PI/180); let s=0; for(let i=0;i<c.length;i++){ const [x1,y1]=c[i],[x2,y2]=c[(i+1)%c.length]; s+=x1*y2-x2*y1; } return Math.abs(s)/2*111320*k*110540; };
   return (geom.type==='Polygon'?[geom.coordinates]:geom.coordinates).reduce((a,p)=>a+ring(p[0])-p.slice(1).reduce((b,h)=>b+ring(h),0),0); }
-function rankParts(pid,r,t){   // t = drawTrend の結果
+function rankParts(pid,r,t,sh){   // t = drawTrend の結果, sh = shape.json の行 [平均行程長, ロス%, 周長%, 鋭角の隅, 一番鋭い角, 向き]
   const rows=r.m.p[pid]||{}, rice=Object.keys(rows).filter(y=>cropOf(rows[y])==='稲'), mls=rice.map(y=>rows[y][6]).filter(v=>v!=null).map(v=>v/1000);
   const vig=mls.length?mls.reduce((a,b)=>a+b,0)/mls.length:null;
   const all=[]; for(const q in r.m.p){ const rs=r.m.p[q], v=Object.keys(rs).filter(y=>cropOf(rs[y])==='稲').map(y=>rs[y][6]).filter(v=>v!=null); if(v.length) all.push(v.reduce((a,b)=>a+b,0)/v.length/1000); }
   const pct=vig==null||!all.length?0.5:(all.filter(x=>x<vig).length+0.5*all.filter(x=>x===vig).length)/all.length;
   const sd=mls.length>=2?Math.sqrt(mls.reduce((a,b)=>a+(b-vig)**2,0)/mls.length):null, area=polyArea(parcels[pid].feature.geometry);
-  const pts={area:35*cl01(Math.log(Math.max(area,1)/500)/Math.log(20)), unif:25*cl01((0.15-t.spread)/0.13), deep:10*cl01(1-t.deep/0.4), vig:15*pct, stab:sd==null?7.5:15*cl01((0.08-sd)/0.06)};
-  return {area,spread:t.spread,deep:t.deep,pct,sd,pts,base:Object.values(pts).reduce((a,b)=>a+b,0)};
+  const pts={area:30*cl01(Math.log(Math.max(area,1)/500)/Math.log(20)), unif:25*cl01((0.15-t.spread)/0.13), deep:10*cl01(1-t.deep/0.4), vig:10*pct, stab:sd==null?5:10*cl01((0.08-sd)/0.06),
+    shape:sh?15*(1-cl01(0.7*cl01(sh[1]/20)+0.3*cl01((sh[2]-100)/40))):7.5};
+  return {area,spread:t.spread,deep:t.deep,pct,sd,sh,pts,base:Object.values(pts).reduce((a,b)=>a+b,0)};
 }
 // 獣害の起きやすさ: cells/<id>/wild.json（ESA WorldCover の森と筆ポリゴンから）
 //   [f30, f100, f200, dirs, paddy] = 田の縁から 0〜30m・30〜100m・100〜200m の森の割合（%）, 200m以内に森がある方位（16方位のビット）, 周り300mの田の割合（%）
@@ -1122,17 +1127,23 @@ function rankText(p,mt){
   const un=p.spread<=0.03?'よくそろっています':p.spread<=0.08?'おおむねそろっています':'ムラが大きめです';
   const vg=p.pct>=0.7?`旺盛（地区の上位${Math.max(1,Math.round((1-p.pct)*10))}割）`:p.pct<=0.3?`控えめ（地区の下位${Math.max(1,Math.round(p.pct*10))}割）`:'地区の平均くらい';
   const st=p.sd==null?'':p.sd<=0.025?'、年ごとの差は小さめ':p.sd<=0.05?'':'、年ごとの差は大きめ';
-  const L=[`約${ha<1?ha.toFixed(2):ha.toFixed(1)}haの${size}田で、田の中の生育は${un}。`,`例年の生育は${vg}${st}です。`], ex=[];
+  const sh=p.sh, hs=`約${ha<1?ha.toFixed(2):ha.toFixed(1)}ha`; let l1=`${hs}の${size}田です。`;
+  if(sh){ const [lb,loss,per,na,mn]=sh;
+    if(loss<=5&&per<=115&&!na) l1=`${hs}の${size}田で、形は整っています（1行程は平均約${lb}m）。`;
+    else if(loss<=12) l1=`${hs}の${size}田で、形はやや変形しています（同じ広さの長方形より機械作業が約${Math.max(1,loss)}%多い）。`;
+    else l1=`${hs}の${size}変形田で、同じ広さの長方形より機械作業が約${loss}%多くかかります`+(na?`（鋭角の隅${na}か所・一番鋭い所 ${mn}°）`:per>=115?`（畦畔が約${(per/100).toFixed(1)}倍）`:'')+'。'; }
+  const L=[l1,`田の中の生育は${un}。例年の生育は${vg}${st}です。`], ex=[];
   if(p.deep>=0.15) ex.push([p.deep,`前半に出遅れて後半に追いつく所（田面が深いなど）が田の${Math.round(p.deep*100)}%あります。`]);
   if(mt&&mt.ok&&mt.pen>=3&&mt.text) ex.push([mt.pen/20+0.5,`${mt.text}（−${mt.pen}点）。`]);
   ex.sort((a,b)=>b[0]-a[0]); if(ex.length) L.push(ex[0][1]);
   return L; }
 async function renderRanks(gen,items){   // items: [{pid,color,r,t}]
   const box=document.getElementById('rankBox'); box.style.display=items.length?'block':'none'; if(!items.length){ box.innerHTML=''; return; }
-  const rows=items.map(it=>({...it,p:rankParts(it.pid,it.r,it.t)}));
+  const shs=await Promise.all(items.map(it=>shapeLoad(parcels[it.pid].cell))); if(gen!==pxGen) return;
+  const rows=items.map((it,i)=>({...it,p:rankParts(it.pid,it.r,it.t,shs[i]&&shs[i].p&&shs[i].p[it.pid])}));
   const draw=()=>{ box.innerHTML='<h2 style="margin:0 0 2px">圃場の評価</h2>'+rows.map(x=>{ const sc=Math.round(x.p.base-(x.mt&&x.mt.pen||0)), rk=RANK_CUT.find(c=>sc>=c[0]);
     return `<div class="rk"><div class="bd" style="background:${rk[2]}">${rk[1]}</div><div class="tx"><b><i style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${x.color};margin-right:5px"></i>${parcels[x.pid].name}　${sc}点</b><br>${rankText(x.p,x.mt).join('<br>')}${x.mt&&!x.mt.ok?'<br><span class="hint">（獣害の手がかりは準備中のため、減点していません）</span>':''}</div></div>`; }).join('')
-    +'<div class="hint">広さ35・生育のそろい25・例年の旺盛さ15・年ごとの安定15・深い所の少なさ10（100点）。獣害の起きやすさ（森との近さ・森に囲まれ具合・周りの田の少なさ）で最大20点を引きます。</div>'; };
+    +'<div class="hint">広さ30・生育のそろい25・形15・例年の旺盛さ10・年ごとの安定10・深い所の少なさ10（100点）。獣害の起きやすさ（森との近さ・森に囲まれ具合・周りの田の少なさ）で最大20点を引きます。</div>'; };
   draw();
   for(const x of rows){ x.mt=await wildRisk(x.pid); if(gen!==pxGen) return; draw(); }
 }
