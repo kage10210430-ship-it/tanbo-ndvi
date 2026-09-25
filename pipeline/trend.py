@@ -42,6 +42,7 @@ EDGE_PX = (0.8, 0.4)      # 区画の縁からこの画素数（≒8m）以内�
                           # 小さい田で MIN_INNER_PX 画素も残らないときは、縁を4mだけ除く
 MIN_INNER_PX = 8
 DEFAULT_WINDOWS = {"e": ["06-01", "07-05"], "l": ["07-20", "08-20"]}
+HIST_WINDOW = ("05-10", "10-01")    # 過去の年の推移（グラフ用）を取る期間（終わりの日は含まない）
 
 
 def trend_years(cfg, today):
@@ -267,6 +268,37 @@ def update_cell(src, cfg, data_dir, cell, today, mask, log, deadline=None):
     return len(made)
 
 
+def hist_years(cfg, today, nd):
+    """hist.json に入れる年: 生育傾向の年のうち、5/10〜9/30 が ndvi.json に入っていない年"""
+    first = (nd or {}).get("dates", [""])[0] if (nd or {}).get("dates") else "9999"
+    return [y for y in trend_years(cfg, today) if f"{y}-{HIST_WINDOW[0]}" < first]
+
+
+def update_hist(backend, cfg, data_dir, cell, today, mask, log, deadline=None):
+    """過去の年（ndvi.json より前）の 5/10〜9/30 の区画平均 NDVI を hist.json に足す（生育傾向のグラフ用）。
+    形式は ndvi.json と同じ v2 に "years"（済んだ年）を足したもの。作った年数を返す"""
+    from update_ndvi import update_source, load_full
+    cdir = os.path.join(data_dir, "cells", cell["id"])
+    inner = read_json(os.path.join(cdir, "inner.geojson"))
+    if not inner or not inner.get("features"):
+        return 0
+    want = hist_years(cfg, today, read_json(os.path.join(cdir, "ndvi.json")))
+    h = read_json(os.path.join(cdir, "hist.json")) or {}
+    if h.get("v") != 2 or h.get("mask") != mask:
+        h = {"v": 2, "mask": mask, "dates": [], "p": {}, "years": []}
+    todo = [y for y in want if y not in h["years"]]
+    full = load_full(cdir); made = []
+    for y in todo:
+        if deadline and time.time() > deadline:
+            break
+        update_source(backend, cfg, cdir, "hist.json", h, cell, inner, full, "s2", f"{y}-{HIST_WINDOW[0]}", f"{y}-{HIST_WINDOW[1]}")
+        h["years"] = sorted(set(h["years"]) | {y}); made.append(y)
+        write_json(os.path.join(cdir, "hist.json"), h)
+    if made:
+        log(f"{cell['id']}: 過去の推移 {made[0]}" + (f"〜{made[-1]}" if len(made) > 1 else "") + "年")
+    return len(made)
+
+
 def order_cells(cfg, cells):
     """config の trend_center（経度, 緯度）に近いセルから"""
     c = cfg.get("trend_center")
@@ -276,24 +308,29 @@ def order_cells(cfg, cells):
     return sorted(cells, key=lambda x: math.hypot(((x["bbox"][0] + x["bbox"][2]) / 2 - c[0]) * k, (x["bbox"][1] + x["bbox"][3]) / 2 - c[1]))
 
 
-def run_all(src, cfg, data_dir, cells, today, mask, log, limit, workers):
-    """まだ作っていない年があるセルを、時間（limit 秒）の許すかぎり作る。作った年数の合計を返す"""
+def run_all(src, cfg, data_dir, cells, today, mask, log, limit, workers, task=None, need=None, name="生育傾向"):
+    """まだ作っていない年があるセルを、時間（limit 秒）の許すかぎり作る。作った年数の合計を返す。
+    task(cell, deadline) と need(cell) を渡すと、ほかのデータ（過去の年の推移 hist.json）にも使える"""
     t1 = time.time(); deadline = t1 + limit
     want = set(trend_years(cfg, today))
-    def need(c):
-        m = read_json(os.path.join(data_dir, "cells", c["id"], "trend.json")) or {}
-        return not (meta_ok(m, cfg, mask) and want <= set(m.get("years", [])))
+    if need is None:
+        def need(c):
+            m = read_json(os.path.join(data_dir, "cells", c["id"], "trend.json")) or {}
+            return not (meta_ok(m, cfg, mask) and want <= set(m.get("years", [])))
+    if task is None:
+        def task(c, dl):
+            return update_cell(src, cfg, data_dir, c, today, mask, log, dl)
     todo = [c for c in order_cells(cfg, cells) if need(c)]
     if not todo:
-        log("生育傾向: すべてのセルが最新です"); return 0
-    log(f"生育傾向: 作るセル {len(todo)}（{min(want)}〜{max(want)}年）")
+        log(f"{name}: すべてのセルが最新です"); return 0
+    log(f"{name}: 作るセル {len(todo)}（{min(want)}〜{max(want)}年）")
     made = done = fails = 0
     with ThreadPoolExecutor(max_workers=workers) as ex:
         futs = {}; pending = list(todo)
         while pending or futs:
             while pending and len(futs) < workers and time.time() < deadline:
                 c = pending.pop(0)
-                futs[ex.submit(update_cell, src, cfg, data_dir, c, today, mask, log, deadline)] = c["id"]
+                futs[ex.submit(task, c, deadline)] = c["id"]
             if not futs:
                 break
             for f in as_completed(list(futs)):
@@ -301,13 +338,13 @@ def run_all(src, cfg, data_dir, cells, today, mask, log, limit, workers):
                 try:
                     made += f.result(); done += 1
                 except Exception as e:         # 1セルの失敗で全体を止めない（次回やり直す）
-                    log(f"{cid}: 生育傾向 エラー {e}"); fails += 1
+                    log(f"{cid}: {name} エラー {e}"); fails += 1
                 break
             if not done and fails >= 2 * workers and pending:   # 最初から続けて失敗するときは、同じ失敗をくり返さないよう今回はやめる
-                log(f"生育傾向: 最初の {fails} セルが続けて失敗したので、今回は中止します"); pending = []
+                log(f"{name}: 最初の {fails} セルが続けて失敗したので、今回は中止します"); pending = []
             if time.time() >= deadline and pending:
-                log(f"生育傾向 時間切れ。残り {len(pending)} セルは次回に続けます。"); pending = []
-    log(f"生育傾向 完了: {done}セル, {made}年分（{(time.time() - t1) / 60:.1f}分）")
+                log(f"{name} 時間切れ。残り {len(pending)} セルは次回に続けます。"); pending = []
+    log(f"{name} 完了: {done}セル, {made}年分（{(time.time() - t1) / 60:.1f}分）")
     return made
 
 
@@ -344,10 +381,25 @@ def main():
         want = set(args.cells.split(",")) if args.cells else None
         cells = [c for c in index["cells"] if want is None or c["id"] in want]
         if limit > 60:
+            today = dt.datetime.now(dt.timezone.utc).date(); t2 = time.time()
             try:
-                made = run_all(src, cfg, data_dir, cells, dt.datetime.now(dt.timezone.utc).date(), mask_id(cfg), log, limit, args.workers)
+                made = run_all(src, cfg, data_dir, cells, today, mask_id(cfg), log, limit, args.workers)
             except Exception as e:               # 途中まで作った分は公開する（-1 = 途中で止まった）
                 log(f"生育傾向 エラー {e}"); made = -1
+            # 過去の年の推移（生育傾向のグラフ用）。GEE のときだけ
+            if args.backend == "gee" and limit - (time.time() - t2) > 60:
+                mid = mask_id(cfg)
+                def hneed(c):
+                    cdir = os.path.join(data_dir, "cells", c["id"])
+                    h = read_json(os.path.join(cdir, "hist.json")) or {}
+                    return not (h.get("v") == 2 and h.get("mask") == mid and
+                                set(hist_years(cfg, today, read_json(os.path.join(cdir, "ndvi.json")))) <= set(h.get("years", [])))
+                try:
+                    hm = run_all(src, cfg, data_dir, cells, today, mid, log, limit - (time.time() - t2), args.workers,
+                                 task=lambda c, dl: update_hist(b, cfg, data_dir, c, today, mid, log, dl), need=hneed, name="過去の推移")
+                    made = made + hm if made >= 0 else made
+                except Exception as e:
+                    log(f"過去の推移 エラー {e}"); made = made or -1
         else:
             log("生育傾向: 残り時間がないので今回は作りません")
     if os.environ.get("GITHUB_OUTPUT"):            # ワークフローで、作った年があるときだけ公開し直すため

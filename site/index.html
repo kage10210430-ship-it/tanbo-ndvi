@@ -749,7 +749,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
       <label><input type="checkbox" id="nbOn">近隣の田の平均も表示</label>
     </div>
     <h2>推移</h2>
-    <div class="ctl">
+    <div class="ctl" id="modeCtl">
       <select id="mode">
         <option value="date">今年（5/10〜9/30）</option>
         <option value="doy">前年と重ねる（5/10〜9/30）</option>
@@ -757,6 +757,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
       </select>
       <label>移植日 <input type="date" id="tp"></label>
     </div>
+    <div class="hint" id="trendHint" style="display:none">生育傾向マップのときは、稲の年（2022年から）の 5/10〜9/30 の平均（実線）と今年（点線）を表示します</div>
     <div class="status" id="status"></div>
     <div class="svgwrap"><svg class="chart" id="chart" viewBox="0 0 560 340" role="img" aria-label="NDVI推移"></svg><div class="tip" id="tip"></div></div>
     <div class="ctl"><button class="btn small" id="btnPng">グラフを画像で保存</button><span class="hint" id="note"></span></div>
@@ -1040,6 +1041,36 @@ function drawTrend(pid,r){   // 戻り値 {years: 重ねた稲の年, rice: 稲�
   pxOverlay(R,m,val,v=>relColor((v-mean)/out.span),mean);
   return out;
 }
+// ---------- 生育傾向のグラフ（稲の年の 5/10〜9/30 の平均） ----------
+// 2025年以降は ndvi.json（いつもの系列）、それより前は cells/<id>/hist.json（同じ形式）から。稲の年は trend.json で見分ける
+const histCache={}, curveCache=new Map(); let curveKey='';
+function histLoad(cell){ if(!(cell in histCache)) histCache[cell]=fetch(`${DATA}cells/${cell}/hist.json`).then(r=>r.ok?r.json():null).catch(()=>null); return histCache[cell]; }
+function trendCurve(pid,y0){   // {years, avg:[点], cur:[今年の点]}。読み込み中は null（読み終わったらグラフを描き直す）
+  const k=`${cleanKey}|${y0}`; if(k!==curveKey){ curveCache.clear(); curveKey=k; }
+  if(curveCache.has(pid)) return curveCache.get(pid);
+  const cell=parcels[pid]?.cell; if(!cell) return {years:[],avg:[],cur:[]};
+  if(!curveCache.has('wait:'+pid)){ curveCache.set('wait:'+pid,true);
+    Promise.all([trLoad(cell),histLoad(cell)]).then(([r,h])=>{ if(k!==curveKey) return; curveCache.set(pid,buildCurve(pid,r,h,y0)); drawChart(); }); }
+  return null; }
+function buildCurve(pid,r,h,y0){
+  const rows=(r&&r.m.p[pid])||{}, years=Object.keys(rows).filter(y=>cropOf(rows[y])==='稲').sort(), t=thr()-1e-9;
+  const s0=y=>Date.UTC(+y,4,10), N=Math.round((Date.UTC(2001,8,30)-Date.UTC(2001,4,10))/864e5);
+  const own=seriesOf(pid).filter(p=>!p.ls&&!p.rad);
+  const hist=[]; if(h&&h.p&&h.p[pid]){ const a=h.p[pid]; for(let k=0;k<a.length;k+=3) if(a[k+2]>=t) hist.push([h.dates[a[k]],a[k+1]/1000]); }
+  const hs=hist.filter((q,i)=>!isDip(hist,i));   // 前後より急に低いV字の点（雲・かすみ）は除く
+  const daily=[], used=[];
+  for(const y of years){ let pts=hs.filter(q=>q[0].startsWith(y)).map(q=>[(Date.parse(q[0])-s0(y))/864e5,q[1]]);
+    if(!pts.length) pts=own.filter(p=>p.date.startsWith(y)).map(p=>[(p.t-s0(y))/864e5,p.ndvi]);
+    pts=pts.filter(q=>q[0]>=-10&&q[0]<=N+10); if(pts.length<4) continue;
+    const v=new Array(N+1).fill(null);   // 1日ごとに線でつなぐ（点と点が25日より離れていればつながない）
+    for(let i=0;i+1<pts.length;i++){ const [x0,a]=pts[i],[x1,b]=pts[i+1]; if(x1-x0>25) continue;
+      for(let d=Math.max(0,Math.ceil(x0));d<=Math.min(N,Math.floor(x1));d++) v[d]=a+(b-a)*(d-x0)/(x1-x0||1); }
+    daily.push(v); used.push(y); }
+  const need=daily.length>=2?2:1, avg=[];
+  if(daily.length>=2) for(let d=0;d<=N;d+=3){ const vs=daily.map(v=>v[d]).filter(x=>x!=null); if(vs.length>=need){ const dt=new Date(Date.UTC(y0,4,10)+d*864e5); avg.push({x:d,ndvi:vs.reduce((a,b)=>a+b,0)/vs.length,avg:true,date:`${dt.getUTCMonth()+1}/${dt.getUTCDate()}（稲の年の平均 ${vs.length}年）`}); } }
+  const cur=own.filter(p=>p.t>=s0(y0)&&p.t<=s0(y0)+N*864e5).map(p=>({...p,x:(p.t-s0(y0))/864e5}));
+  return {years:used,avg,cur};
+}
 async function renderTrend(gen,mode,note,lbl){
   const used=[], spans=[]; let one=null, wait=0, few=0; note.textContent='読み込み中…';
   for(const s of selected){ const P=parcels[s.pid]; if(!P||!P.cell){ wait++; continue; }
@@ -1086,7 +1117,7 @@ async function buildPxDates(){   // 圃場内モードでは、選んだ田ん�
   sel.innerHTML=''; for(const x of list){ const o=document.createElement('option'); o.value=x; o.textContent=x; sel.appendChild(o); }
   sel.value=list.includes(keep)?keep:list[0]; paintMap();
 }
-document.getElementById('fillMode').onchange=buildPxDates;
+document.getElementById('fillMode').onchange=()=>{ buildPxDates(); drawChart(); };
 
 // ---------- chips ----------
 function renderChips(){
@@ -1105,13 +1136,21 @@ function drawChart(){
   const now=allDates.length?Date.parse(allDates[allDates.length-1]+'T00:00:00Z'):Date.now();
   const tp=document.getElementById('tp').value; const tpT=tp?Date.parse(tp+'T00:00:00Z'):null;
   if(mode==='dat'&&!tpT){ setStatus('移植日を入れると「移植後日数」で表示できます。'); } else if(!selected.length) setStatus('田んぼを選ぶとグラフが出ます。'); else setStatus('');
-  let xmin,xmax; const series=[];
-  const src=selected.map(s=>({label:parcels[s.pid].name,color:s.color,dash:'',pts:seriesOf(s.pid)}));
+  let xmin,xmax; const series=[]; const tmode=isTrend(fillMode());
+  document.getElementById('modeCtl').style.display=tmode?'none':''; document.getElementById('trendHint').style.display=tmode?'':'none';
+  if(tmode) setStatus(selected.length?'':'田んぼを選ぶとグラフが出ます。');
+  const src=tmode?[]:selected.map(s=>({label:parcels[s.pid].name,color:s.color,dash:'',pts:seriesOf(s.pid)}));
   if(document.getElementById('nbOn').checked&&selected.length){ const nb=neighborSeries(); if(nb.n) src.push({label:`近隣の田の平均（${nb.n}枚）`,color:'#8a8f8c',dash:'6 4',pts:nb.pts}); }
   // 期間は 5/10〜9/30（今年＝最新の観測がある年）。前年と重ねるときは各年の 5/10 からの日数で並べる
   const y0=new Date(now).getUTCFullYear(), SEAS=[[4,10],[8,30]], sStart=y=>Date.UTC(y,SEAS[0][0],SEAS[0][1]), sEnd=y=>Date.UTC(y,SEAS[1][0],SEAS[1][1]);
   const seasonTicks=(off)=>[[sStart(y0),'5/10']].concat([5,6,7,8].map(m=>[Date.UTC(y0,m,1),`${m+1}月`]),[[sEnd(y0),'9/30']]).map(([t,l])=>[off(t),l]);
-  if(mode==='date'){ xmin=sStart(y0); xmax=sEnd(y0);
+  if(tmode){ xmin=0; xmax=(sEnd(y0)-sStart(y0))/864e5; let wait=0;
+    for(const s of selected){ const c=trendCurve(s.pid,y0); if(!c){ wait++; continue; } const nm=parcels[s.pid].name;
+      if(c.avg.length) series.push({label:`${nm} 稲の年の平均（${c.years.join('・')}）`,color:s.color,dash:'',pts:c.avg});
+      else setStatus(`${nm}: 稲の年の推移がまだないか、稲の年が足りません`);
+      if(c.cur.length) series.push({label:`${nm} 今年`,color:s.color,dash:'4 3',pts:c.cur}); }
+    if(wait) setStatus('過去の推移を読み込み中…'); }
+  else if(mode==='date'){ xmin=sStart(y0); xmax=sEnd(y0);
     for(const s of src) series.push({...s,pts:s.pts.filter(p=>p.t>=xmin&&p.t<=xmax).map(p=>({x:p.t,...p}))}); }
   else if(mode==='doy'){ xmin=0; xmax=(sEnd(y0)-sStart(y0))/864e5;
     for(const s of src) for(const [k,y] of [[0,y0],[1,y0-1]]){ const pts=s.pts.filter(p=>p.t>=sStart(y)&&p.t<=sEnd(y)).map(p=>({x:(p.t-sStart(y))/864e5,...p})); if(pts.length) series.push({...s,label:`${s.label} ${y}`,dash:k?(s.dash||'6 4'):s.dash,pts}); } }
@@ -1120,14 +1159,14 @@ function drawChart(){
   const X=v=>ML+(v-xmin)/(xmax-xmin)*(W-ML-MR), Y=v=>MT+(1-Math.max(-0.05,Math.min(1,v)))/1.05*(H-MT-MB);
   let g='';
   for(let v=0;v<=1.0001;v+=0.2) g+=`<line x1="${ML}" x2="${W-MR}" y1="${Y(v)}" y2="${Y(v)}" stroke="#e6eae3"/><text x="${ML-6}" y="${Y(v)+4}" text-anchor="end" font-size="12" fill="#4c5a52">${v.toFixed(1)}</text>`;
-  if(mode==='date'||mode==='doy'){ seasonTicks(mode==='date'?t=>t:t=>(t-sStart(y0))/864e5).forEach(([x,l],i,a)=>{ g+=`<line x1="${X(x)}" x2="${X(x)}" y1="${MT}" y2="${H-MB}" stroke="#eef1ec"/><text x="${X(x)}" y="${H-MB+15}" text-anchor="${i===0?'start':i===a.length-1?'end':'middle'}" font-size="12" fill="#4c5a52">${l}</text>`; }); }
+  if(tmode||mode==='date'||mode==='doy'){ seasonTicks(mode==='date'&&!tmode?t=>t:t=>(t-sStart(y0))/864e5).forEach(([x,l],i,a)=>{ g+=`<line x1="${X(x)}" x2="${X(x)}" y1="${MT}" y2="${H-MB}" stroke="#eef1ec"/><text x="${X(x)}" y="${H-MB+15}" text-anchor="${i===0?'start':i===a.length-1?'end':'middle'}" font-size="12" fill="#4c5a52">${l}</text>`; }); }
   else { for(let x=0;x<=160;x+=20) g+=`<line x1="${X(x)}" x2="${X(x)}" y1="${MT}" y2="${H-MB}" stroke="${x===0?'#b9c2b7':'#eef1ec'}"/><text x="${X(x)}" y="${H-MB+15}" text-anchor="middle" font-size="12" fill="#4c5a52">${x}日</text>`; g+=`<text x="${W-MR}" y="${H-6}" text-anchor="end" font-size="11" fill="#4c5a52">移植後日数</text>`; }
   g+=`<line x1="${ML}" x2="${W-MR}" y1="${Y(0)}" y2="${Y(0)}" stroke="#4c5a52"/>`;
   hoverPts=[];
   for(const s of series){ if(!s.pts.length) continue; g+=`<path d="${s.pts.map((p,i)=>`${i?'L':'M'}${X(p.x).toFixed(1)},${Y(p.ndvi).toFixed(1)}`).join('')}" fill="none" stroke="${s.color}" stroke-width="2" stroke-dasharray="${s.dash}" stroke-linejoin="round"/>`;
     for(const p of s.pts){ const cx=X(p.x).toFixed(1), cy=Y(p.ndvi).toFixed(1);
       if(p.prov) g+=`<circle cx="${cx}" cy="${cy}" r="6" fill="none" stroke="${p.haze?'#d93025':'#1e3a2f'}" stroke-width="1.2" stroke-dasharray="2 2"/>`;   // 速報
-      g+=p.rad?`<path d="M${cx},${cy-3.8}l3.8,3.8l-3.8,3.8l-3.8,-3.8z" fill="#fff" stroke="${s.color}" stroke-width="1.4"/>`:p.ls?`<circle cx="${X(p.x).toFixed(1)}" cy="${Y(p.ndvi).toFixed(1)}" r="3" fill="#fff" stroke="${s.color}" stroke-width="1.6"/>`:`<circle cx="${X(p.x).toFixed(1)}" cy="${Y(p.ndvi).toFixed(1)}" r="2.8" fill="${s.color}"/>`; hoverPts.push({px:X(p.x),x:p.x,s,p}); } }
+      g+=p.rad?`<path d="M${cx},${cy-3.8}l3.8,3.8l-3.8,3.8l-3.8,-3.8z" fill="#fff" stroke="${s.color}" stroke-width="1.4"/>`:p.ls?`<circle cx="${X(p.x).toFixed(1)}" cy="${Y(p.ndvi).toFixed(1)}" r="3" fill="#fff" stroke="${s.color}" stroke-width="1.6"/>`:`<circle cx="${X(p.x).toFixed(1)}" cy="${Y(p.ndvi).toFixed(1)}" r="${p.avg?1.6:2.8}" fill="${s.color}"/>`; hoverPts.push({px:X(p.x),x:p.x,s,p}); } }
   g+=`<line id="hl" x1="0" x2="0" y1="${MT}" y2="${H-MB}" stroke="#1e3a2f" stroke-dasharray="3 3" visibility="hidden"/>`;
   // legend inside svg (so PNG includes it)
   let lx=ML, ly=H-MB+34; for(const s of series){ const w=s.label.length*13.5+36; if(lx+w>W-MR){lx=ML;ly+=20;} g+=`<line x1="${lx}" x2="${lx+18}" y1="${ly-5}" y2="${ly-5}" stroke="${s.color}" stroke-width="2.5" stroke-dasharray="${s.dash}"/><text x="${lx+22}" y="${ly}" font-size="14" fill="#1e3a2f">${s.label}</text>`; lx+=w; }
