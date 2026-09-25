@@ -717,10 +717,29 @@ svg.leaflet-image-layer.leaflet-interactive path {
   .rk-B{background:linear-gradient(145deg,#f4f7fa,#bcc7d2 55%,#e6ebf0);color:#2d3e50;box-shadow:inset 0 0 0 1px rgba(0,0,0,.1)}
   .rk-C{background:#dcd7cb;color:#5d5645}
   .rk-D{background:#c9c5c0;color:#6b6560}
+  .rk-E{background:#b3aea8;color:#58534e}
+  .rk-F{background:#8e8a86;color:#ecebe9}
+  /* UR: 虹の枠がまわり、夜空の中で金〜虹の文字が光る。星がまたたき、外側も脈打つように光る */
+  .rk-UR{background:#12002b;color:#fff;animation:urPulse 1.8s ease-in-out infinite}
+  .rk-UR::before{content:'';position:absolute;inset:-60%;background:conic-gradient(#ff004c,#ffb800,#fff200,#00ff9d,#00c8ff,#7a5cff,#ff00d4,#ff004c);animation:urSpin 2.2s linear infinite}
+  .rk-UR::after{content:'';position:absolute;inset:3px;border-radius:.42em;
+        background:radial-gradient(circle at 22% 24%,#fff 0 .6px,transparent 1.6px),radial-gradient(circle at 78% 30%,#fff 0 .6px,transparent 1.6px),
+                   radial-gradient(circle at 64% 82%,#fff 0 .5px,transparent 1.4px),radial-gradient(circle at 18% 76%,#ffe8a0 0 .5px,transparent 1.4px),
+                   radial-gradient(circle at 50% 12%,#ffd6f5 0 .5px,transparent 1.3px),linear-gradient(160deg,#2c0656,#0b0020 55%,#3d0b40)}
+  .rk-UR small,.rk-UR span,.rk-UR i{position:relative;z-index:2}
+  .rk-UR small{color:#ffe27a;text-shadow:0 0 4px rgba(255,215,0,.9)}
+  .rk-UR span{font-size:1.55em;letter-spacing:-.02em;background:linear-gradient(90deg,#fff7b0,#ffd700,#ff8ad8,#9be7ff,#b7ffb0,#fff7b0);background-size:250% auto;
+        -webkit-background-clip:text;background-clip:text;color:transparent;animation:urText 2.2s linear infinite;filter:drop-shadow(0 0 3px rgba(255,215,0,.95)) drop-shadow(0 0 7px rgba(255,80,200,.6))}
+  .rk-UR i{position:absolute;font-style:normal;color:#fff;font-size:.55em;text-shadow:0 0 4px #fff,0 0 8px #ffd700;animation:rkTwinkle 1.3s ease-in-out infinite}
+  .rk-UR i:nth-of-type(1){top:.18em;left:.3em} .rk-UR i:nth-of-type(2){top:.35em;right:.25em;animation-delay:.45s;font-size:.45em} .rk-UR i:nth-of-type(3){bottom:.22em;right:.45em;animation-delay:.9s}
+  .rk-UR i:nth-of-type(4){bottom:.3em;left:.28em;animation-delay:.25s;font-size:.4em}
+  @keyframes urSpin{to{transform:rotate(360deg)}}
+  @keyframes urText{to{background-position:250% center}}
+  @keyframes urPulse{0%,100%{box-shadow:0 0 8px rgba(255,215,0,.75),0 0 16px rgba(255,0,200,.4)}50%{box-shadow:0 0 14px rgba(255,235,120,1),0 0 30px rgba(255,0,200,.7),0 0 44px rgba(0,200,255,.45)}}
   @keyframes rkHolo{0%{background-position:0% 50%}100%{background-position:300% 50%}}
   @keyframes rkShine{0%{background-position:160% 0}100%{background-position:-110% 0}}
   @keyframes rkTwinkle{0%,100%{opacity:.25;transform:scale(.8)}50%{opacity:1;transform:scale(1.15)}}
-  @media (prefers-reduced-motion:reduce){.rk-S,.rk-S::after,.rk-S::before,.rk-A::after{animation:none}}
+  @media (prefers-reduced-motion:reduce){.rk-S,.rk-S::after,.rk-S::before,.rk-A::after,.rk-UR,.rk-UR::before,.rk-UR span,.rk-UR i{animation:none}}
   .rktip{position:fixed;z-index:2000;display:none;overflow:auto;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.18);padding:8px 10px;font-size:12px;line-height:1.5;max-width:min(94vw,40em)}
   .rktip table{font-size:1em;margin:4px 0;border-collapse:collapse} .rktip td,.rktip th{white-space:normal;vertical-align:top;padding:3px 5px;border-top:1px solid var(--grid);text-align:left}
   .rktip td:first-child,.rktip td.num{white-space:nowrap} .rktip .why{color:var(--ink2);font-size:.95em}
@@ -1103,14 +1122,14 @@ function buildCurve(pid,r,h,y0){
   const cur=own.filter(p=>p.t>=s0(y0)&&p.t<=s0(y0)+N*864e5).map(p=>({...p,x:(p.t-s0(y0))/864e5}));
   return {years:used,avg,cur};
 }
-// ---------- 圃場の評価（S〜D） ----------
+// ---------- 圃場の評価（UR〜F） ----------
 // 100点満点: 広さ30・生育のそろい15・形15・深い所の少なさ10・例年の旺盛さ20・年ごとの安定10。獣害の起きやすさで最大20点を引く
 // 形（cells/<id>/shape.json）: 同じ広さの 1:3 の長方形と比べた機械作業のロス（旋回・鋭角の隅の切り返しと手作業）と畦畔の長さ
 //   形の点 = 15 ×（1 − (0.7×ロス/20% + 0.3×畦畔の増え/40%)）
-// 区切りは県全体の稲の田（約12万枚）で、獣害の減点のあとの点が S 8%・A 24%・B 43%・C 20%・D 5% になるように
+// 区切りは県全体の稲の田（約12万枚）で、獣害の減点のあとの点が UR 2%・S 6%・A 18%・B 27%・C 21%・D 14%・E 8%・F 4% くらいになるように
 // いまは公開ページにも出す。広く知らせる前に SHOW_RANK を false にすると、手元のパソコン（file: か localhost）で開いたときだけ出る
 // （地代・売買や個人の評価に使われるおそれがあるため）
-const RANK_CUT=[[79,'S'],[66,'A'],[44,'B'],[27,'C'],[-1e9,'D']];   // 見た目は CSS の .rk-S 〜 .rk-D
+const RANK_CUT=[[85,'UR',2],[78,'S',6],[68,'A',18],[55,'B',27],[44,'C',21],[34,'D',14],[24,'E',8],[-1e9,'F',4]];   // [この点以上, ランク, 県全体でのおよその割合%]。見た目は CSS の .rk-UR 〜 .rk-F
 const SHOW_RANK=true||location.protocol==='file:'||/^(localhost|127\.)/.test(location.hostname);
 const shapeCache={};
 function shapeLoad(cell){ if(!(cell in shapeCache)) shapeCache[cell]=fetch(`${DATA}cells/${cell}/shape.json`).then(r=>r.ok?r.json():null).catch(()=>null); return shapeCache[cell]; }
@@ -1175,7 +1194,7 @@ function rankTip(b,x,pin){   // ランクの札の説明（点数の内わけと
   el.style.pointerEvents=pin?'auto':'none';
   const p=x.p, P=p.pts, mt=x.mt, pen=mt&&mt.ok?mt.pen:0, sc=Math.round(p.base-pen), rk=RANK_CUT.find(c=>sc>=c[0])[1], f1=v=>v.toFixed(1), pc=v=>Math.round(v*100)+'%';
   const sh=p.sh, row=(n,v,max,why)=>`<tr><td>${n}</td><td class="num"><b>${f1(v)}</b> / ${max}</td><td class="why">${why}</td></tr>`;
-  const cut=RANK_CUT.slice(0,4).map(c=>`${c[1]} ${c[0]}点以上`).join('・')+'・D それ未満';
+  const cut=RANK_CUT.slice(0,-1).map(c=>`${c[1]} ${c[0]}点以上`).join('・')+`・${RANK_CUT[RANK_CUT.length-1][1]} それ未満`, share=RANK_CUT.map(c=>`${c[1]} ${c[2]}%`).join('・');
   el.innerHTML=`<div style="display:flex;align-items:center;gap:8px"><b style="font-size:15px">ランク ${rk}</b><b style="color:${x.color}">${selLabel(x.pid)}</b><span>合計 <b style="font-size:15px">${sc}点</b>（${f1(p.base)}${pen?` − 獣害 ${pen}`:''}）</span></div>
   <table><tr><th>項目</th><th>点</th><th>計算のしかた・根拠</th></tr>
   ${row('広さ',P.area,30,`${Math.round(p.area/100)}a。30 × log(面積÷5a) ÷ log(20)：5a で0点、1ha（100a）以上で満点`)}
@@ -1187,7 +1206,7 @@ function rankTip(b,x,pin){   // ランクの札の説明（点数の内わけと
   ${mt&&mt.ok?`<tr><td>獣害</td><td class="num"><b>−${pen}</b> / 20</td><td class="why">田の縁から 30m以内の森 ${mt.f30}%・30〜100m ${mt.f100}%、森がある方位 ${mt.ndir}/16、周り300mの田 ${mt.pad}%。
     近さ ${mt.near.toFixed(2)} =（0.6×30m以内 + 0.4×30〜100m）÷ 40%、囲まれ ${mt.encl.toFixed(2)} =（方位数 − 3）÷ 9、孤立 ${mt.iso.toFixed(2)} =（40% − 周りの田）÷ 35%（どれも 0〜1）。
     減点 = 20 ×（0.6×近さ + 0.25×囲まれ + 0.15×孤立）（森は ESA WorldCover 2021、10m）</td></tr>`:`<tr><td>獣害</td><td class="num">−0</td><td class="why">手がかりの準備中のため減点なし</td></tr>`}
-  </table><div class="why">ランクの区切り：${cut}（県全体の稲の田で S 8%・A 24%・B 43%・C 20%・D 5%）。NDVI は Sentinel-2 と Landsat、形は筆ポリゴン（農林水産省）から。</div>`;
+  </table><div class="why">ランクの区切り：${cut}（県全体の稲の田で ${share}）。NDVI は Sentinel-2 と Landsat、形は筆ポリゴン（農林水産省）から。</div>`;
   el.style.fontSize=Math.max(12,0.85*parseFloat(getComputedStyle(b.closest('.rankbox')).fontSize))+'px';
   el.style.maxHeight=''; el.style.display='block'; const r=b.getBoundingClientRect(), w=el.offsetWidth; let h=el.offsetHeight, left, top;
   if(r.right+8+w<=innerWidth-8||r.left-8-w>=8){   // 横に置ける
@@ -1203,7 +1222,7 @@ async function renderRanks(gen,items){   // items: [{pid,color,r,t}]
   const shs=await Promise.all(items.map(it=>shapeLoad(parcels[it.pid].cell))); if(gen!==pxGen) return;
   const rows=items.map((it,i)=>({...it,p:rankParts(it.pid,it.r,it.t,shs[i]&&shs[i].p&&shs[i].p[it.pid])}));
   const draw=()=>{ box.innerHTML='<h2 style="margin:0 0 2px">圃場の評価</h2>'+rows.map((x,i)=>{ const sc=Math.round(x.p.base-(x.mt&&x.mt.pen||0)), rk=RANK_CUT.find(c=>sc>=c[0])[1];
-    return `<div class="rk"><div class="bd rk-${rk}" data-i="${i}" tabindex="0" aria-label="ランク${rk}（くわしい点数）"><small>Rank</small><span>${rk}</span></div><div class="tx"><b style="color:${x.color}">${selLabel(x.pid)}</b>　<b>${sc}点</b><br>${rankText(x.p,x.mt).join('<br>')}${x.mt&&!x.mt.ok?'<br><span class="hint">（獣害の手がかりは準備中のため、減点していません）</span>':''}</div></div>`; }).join('')
+    return `<div class="rk"><div class="bd rk-${rk}" data-i="${i}" tabindex="0" aria-label="ランク${rk}（くわしい点数）"><small>Rank</small><span>${rk}</span>${rk==='UR'?'<i>✦</i><i>✦</i><i>✧</i><i>✦</i>':''}</div><div class="tx"><b style="color:${x.color}">${selLabel(x.pid)}</b>　<b>${sc}点</b><br>${rankText(x.p,x.mt).join('<br>')}${x.mt&&!x.mt.ok?'<br><span class="hint">（獣害の手がかりは準備中のため、減点していません）</span>':''}</div></div>`; }).join('')
     +'<div class="hint">広さ30・生育のそろい15・形15・深い所の少なさ10・例年の旺盛さ20・年ごとの安定10（100点）。獣害の起きやすさ（森との近さ・森に囲まれ具合・周りの田の少なさ）で最大20点を引きます。ランクの札にマウスを重ねる（スマホは押す）と、点数のわけが出ます。</div>';
     // マウスは重ねると出る（押すと出したままにする）。スマホは押すと出て、ほかを押すと消える
     box.querySelectorAll('.bd').forEach(b=>{ const x=rows[+b.dataset.i];
