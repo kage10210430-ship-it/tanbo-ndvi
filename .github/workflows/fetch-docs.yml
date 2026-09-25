@@ -1,0 +1,38 @@
+# 公開されている資料（市町の鳥獣被害防止計画の PDF など）を取ってきて、文字にして fetch-docs ブランチに置く。
+# 作業用のコンテナから役所のサイトに直接つながらないときに使う（手で Run workflow してもよい）
+name: fetch-docs
+on:
+  workflow_dispatch:
+    inputs:
+      urls:
+        description: 取ってくる URL（空白で区切る）
+        required: true
+permissions:
+  contents: write
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: 道具
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils >/dev/null
+      - name: 取ってくる
+        env:
+          URLS: ${{ inputs.urls }}
+        run: |
+          mkdir out && cd out
+          i=0
+          for u in $URLS; do
+            i=$((i+1)); f=$(printf '%02d' $i)
+            echo "$u" > $f.url
+            if ! curl -sSL --max-time 120 -A 'Mozilla/5.0' -o $f.bin "$u"; then echo "失敗 $u"; rm -f $f.bin; continue; fi
+            if head -c 5 $f.bin | grep -q '%PDF'; then mv $f.bin $f.pdf; pdftotext -layout $f.pdf $f.txt || true
+            else mv $f.bin $f.html; fi
+          done
+          ls -la
+      - name: fetch-docs ブランチに置く
+        run: |
+          cd out
+          git init -q -b fetch-docs && git add -A
+          git -c user.name=github-actions -c user.email=41898282+github-actions[bot]@users.noreply.github.com commit -qm "fetch ${{ github.run_id }}"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" fetch-docs

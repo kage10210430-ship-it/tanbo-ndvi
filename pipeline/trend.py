@@ -419,6 +419,14 @@ def main():
                 made = made + sm if made >= 0 else made
             except Exception as e:
                 log(f"田の形 エラー {e}"); made = made or -1
+            # 田ごとの市町と、市町の獣害の被害の多さ（pipeline/wild_city.json を書きかえたときも作り直す）
+            import city
+            try:
+                if city.need(data_dir):
+                    cm = city.build(cfg, data_dir, log)
+                    made = made + cm if made >= 0 else made
+            except Exception as e:
+                log(f"市町 エラー {e}"); made = made or -1
         else:
             log("生育傾向: 残り時間がないので今回は作りません")
     if os.environ.get("GITHUB_OUTPUT"):            # ワークフローで、作った年があるときだけ公開し直すため

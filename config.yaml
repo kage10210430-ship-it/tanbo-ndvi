@@ -41,5 +41,25 @@ trend_from: 2022          # 何年からさかのぼって重ねるか（2022〜
 trend_windows: {e: ["06-01", "07-05"], l: ["07-20", "08-20"]}   # 「6月ごろ」「8月ごろ」の期間（月-日）
 trend_center: [136.29, 36.05]   # この場所（経度, 緯度）に近いセルから先に作る
 
+# 市町の境界（国土数値情報 行政区域 N03 を GeoJSON にしたもの）。田ごとの市町を決め、市町の獣害の被害の多さを評価に入れる
+city_sources:
+  - https://raw.githubusercontent.com/niiyz/JapanCityGeoJson/master/geojson/18/18201.json
+  - https://raw.githubusercontent.com/niiyz/JapanCityGeoJson/master/geojson/18/18202.json
+  - https://raw.githubusercontent.com/niiyz/JapanCityGeoJson/master/geojson/18/18204.json
+  - https://raw.githubusercontent.com/niiyz/JapanCityGeoJson/master/geojson/18/18205.json
+  - https://raw.githubusercontent.com/niiyz/JapanCityGeoJson/master/geojson/18/18206.json
+  - https://raw.githubusercontent.com/niiyz/JapanCityGeoJson/master/geojson/18/18207.json
+  - https://raw.githubusercontent.com/niiyz/JapanCityGeoJson/master/geojson/18/18208.json
+  - https://raw.githubusercontent.com/niiyz/JapanCityGeoJson/master/geojson/18/18209.json
+  - https://raw.githubusercontent.com/niiyz/JapanCityGeoJson/master/geojson/18/18210.json
+  - https://raw.githubusercontent.com/niiyz/JapanCityGeoJson/master/geojson/18/18322.json
+  - https://raw.githubusercontent.com/niiyz/JapanCityGeoJson/master/geojson/18/18382.json
+  - https://raw.githubusercontent.com/niiyz/JapanCityGeoJson/master/geojson/18/18404.json
+  - https://raw.githubusercontent.com/niiyz/JapanCityGeoJson/master/geojson/18/18423.json
+  - https://raw.githubusercontent.com/niiyz/JapanCityGeoJson/master/geojson/18/18442.json
+  - https://raw.githubusercontent.com/niiyz/JapanCityGeoJson/master/geojson/18/18481.json
+  - https://raw.githubusercontent.com/niiyz/JapanCityGeoJson/master/geojson/18/18483.json
+  - https://raw.githubusercontent.com/niiyz/JapanCityGeoJson/master/geojson/18/18501.json
+
 # 出力先
 site_dir: ./site
