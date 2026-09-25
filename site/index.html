@@ -746,7 +746,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
     <div class="chips" id="chips"></div>
     <div class="ctl">
       <button class="btn small" id="btnClear">すべて解除</button>
-      <label><input type="checkbox" id="nbOn">近隣の田の平均も表示</label>
+      <label style="display:none"><input type="checkbox" id="nbOn">近隣の田の平均も表示</label>
     </div>
     <h2>推移</h2>
     <div class="ctl" id="modeCtl">
@@ -757,7 +757,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
       </select>
       <label>移植日 <input type="date" id="tp"></label>
     </div>
-    <div class="hint" id="trendHint" style="display:none">生育傾向マップのときは、稲の年（2022年から）の 5/10〜9/30 の平均（実線）と今年（点線）を表示します</div>
+    <div class="hint" id="trendHint" style="display:none">生育傾向マップのときは、稲の年（2022年から）の 5/10〜9/30 の平均を表示します</div>
     <div class="status" id="status"></div>
     <div class="svgwrap"><svg class="chart" id="chart" viewBox="0 0 560 340" role="img" aria-label="NDVI推移"></svg><div class="tip" id="tip"></div></div>
     <div class="ctl"><button class="btn small" id="btnPng">グラフを画像で保存</button><span class="hint" id="note"></span></div>
@@ -1148,7 +1148,7 @@ function drawChart(){
     for(const s of selected){ const c=trendCurve(s.pid,y0); if(!c){ wait++; continue; } const nm=parcels[s.pid].name;
       if(c.avg.length) series.push({label:`${nm} 稲の年の平均（${c.years.join('・')}）`,color:s.color,dash:'',pts:c.avg});
       else setStatus(`${nm}: 稲の年の推移がまだないか、稲の年が足りません`);
-      if(c.cur.length) series.push({label:`${nm} 今年`,color:s.color,dash:'4 3',pts:c.cur}); }
+    }
     if(wait) setStatus('過去の推移を読み込み中…'); }
   else if(mode==='date'){ xmin=sStart(y0); xmax=sEnd(y0);
     for(const s of src) series.push({...s,pts:s.pts.filter(p=>p.t>=xmin&&p.t<=xmax).map(p=>({x:p.t,...p}))}); }
