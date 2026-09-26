@@ -22,7 +22,7 @@ jobs:
       - name: 道具
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils tesseract-ocr tesseract-ocr-jpn >/dev/null
-          pip install -q openpyxl xlrd
+          pip install -q openpyxl xlrd pillow
       - name: 取ってくる
         env:
           URLS: ${{ inputs.urls }}
@@ -33,7 +33,9 @@ jobs:
           for u in $URLS; do
             i=$((i+1)); f=$(printf '%02d' $i)
             echo "=====DOC $f $u"
-            if ! curl -sSL --max-time 120 -A 'Mozilla/5.0' -o $f.bin "$u"; then echo "失敗"; continue; fi
+            if ! curl -sSL --max-time 120 -A 'Mozilla/5.0' -o $f.bin -w "HTTP %{http_code} %{content_type} %{size_download}B\n" "$u"; then echo "失敗"; continue; fi
+            if head -c 8 $f.bin | od -An -tx1 | grep -q '89 50 4e 47'; then   # PNG（地図タイルなど）は大きさと色だけ出す
+              python3 -c "import sys;from PIL import Image;im=Image.open(sys.argv[1]);print('PNG',im.size,im.mode,sorted(im.convert('RGBA').getcolors(1<<20) or [],reverse=True)[:8])" $f.bin 2>&1 || true; continue; fi
             if head -c 5 $f.bin | grep -q '%PDF'; then
               pdftotext -layout $f.bin $f.txt || true
               if [ "$(tr -d '[:space:][:digit:]' < $f.txt | wc -c)" -lt 300 ]; then   # 画像だけの PDF は文字を読み取る（はじめの8ページ）

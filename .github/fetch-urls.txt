@@ -1,18 +1,8 @@
-# fetch-docs: 福井県の市町別の作付面積（e-Stat 作物統計 市町村別データ・北陸農政局）
-https://www.maff.go.jp/hokuriku/stat/data/pdf/suitou_20251225.pdf
-https://www.maff.go.jp/hokuriku/stat/data/attach/xls/r04_harvest_h-2.xlsx
-https://www.e-stat.go.jp/stat-search/file-download?statInfId=000040250172&fileKind=0
-https://www.e-stat.go.jp/stat-search/file-download?statInfId=000040250220&fileKind=0
-https://www.e-stat.go.jp/stat-search/file-download?statInfId=000040250268&fileKind=0
-https://www.e-stat.go.jp/stat-search/file-download?statInfId=000040250316&fileKind=0
-https://www.e-stat.go.jp/stat-search/file-download?statInfId=000040250364&fileKind=0
-https://www.e-stat.go.jp/stat-search/file-download?statInfId=000040145028&fileKind=0
-https://www.e-stat.go.jp/stat-search/file-download?statInfId=000040145076&fileKind=0
-https://www.e-stat.go.jp/stat-search/file-download?statInfId=000040145124&fileKind=0
-https://www.e-stat.go.jp/stat-search/file-download?statInfId=000040145172&fileKind=0
-https://www.e-stat.go.jp/stat-search/file-download?statInfId=000040145220&fileKind=0
-https://www.e-stat.go.jp/stat-search/file-download?statInfId=000040427729&fileKind=0
-https://www.e-stat.go.jp/stat-search/file-download?statInfId=000040427777&fileKind=0
-https://www.e-stat.go.jp/stat-search/file-download?statInfId=000040427825&fileKind=0
-https://www.e-stat.go.jp/stat-search/file-download?statInfId=000040427873&fileKind=0
-https://www.e-stat.go.jp/stat-search/file-download?statInfId=000040427921&fileKind=0
+# 土壌図タイルの確認（福井 36.06N 136.2E）
+https://soil-inventory.rad.naro.go.jp/tile/figure/15/28781/12860.png
+https://soil-inventory.rad.naro.go.jp/tile/figure/14/14390/6430.png
+https://soil-inventory.rad.naro.go.jp/tile/figure/12/3597/1607.png
+https://soil-inventory.dc.affrc.go.jp/tile/figure/14/14390/6430.png
+https://soil-inventory.rad.naro.go.jp/tile/figure/10/899/401.png
+https://soil-inventory.rad.naro.go.jp/figure.html
+https://soil-inventory.rad.naro.go.jp/
