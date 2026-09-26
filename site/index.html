@@ -1386,8 +1386,7 @@ async function renderRanks(gen,items){   // items: [{pid,color,r,t}]
   const [shs,wzs,wls]=await Promise.all([shapeLoad,wetLoad,wildLoad].map(f=>Promise.all(items.map(it=>f(parcels[it.pid].cell))))); if(gen!==pxGen) return;
   const rows=items.map((it,i)=>({...it,p:rankParts(it.pid,it.r,it.t,shs[i]&&shs[i].p&&shs[i].p[it.pid],hamaOf(it.pid,it.t.deep,wzs[i],wls[i]&&wls[i].p&&wls[i].p[it.pid]))}));
   const draw=()=>{ box.innerHTML='<h2 style="margin:0 0 2px">圃場の評価</h2>'+rows.map((x,i)=>{ const sc=Math.round(x.p.base-(x.mt&&x.mt.pen||0)), rk=RANK_CUT.find(c=>sc>=c[0])[1];
-    return `<div class="rk"><div class="bd rk-${rk}" data-i="${i}" tabindex="0" aria-label="ランク${rk}（くわしい点数）"><small>Rank</small><span>${rk}</span>${rk==='SSS'?'<i>✦</i><i>✦</i><i>✧</i><i>✦</i>':''}</div><div class="tx"><b style="color:${x.color}">${selLabel(x.pid)}</b>　<b>${sc}点</b><br>${rankText(x.p,x.mt).join('<br>')}${x.mt&&!x.mt.ok?'<br><span class="hint">（獣害の手がかりは準備中のため、減点していません）</span>':''}</div></div>`; }).join('')
-    +'<div class="hint">広さ30・生育のそろい15・形と大きさ15（小さい田ほど機械の出し入れの手間で低い）・深いところの少なさ10（機械のハマりにくさ。土壌図・稲刈り後や春先の乾き・周りとの高さ・深い所）・例年の旺盛さ20・年ごとの安定10（100点）。獣害の起きやすさ（森との近さ・森に囲まれ具合・周りの田の少なさ）で最大20点を引きます。ランクの札にマウスを重ねる（スマホは押す）と、点数のわけが出ます。</div>';
+    return `<div class="rk"><div class="bd rk-${rk}" data-i="${i}" tabindex="0" aria-label="ランク${rk}（くわしい点数）"><small>Rank</small><span>${rk}</span>${rk==='SSS'?'<i>✦</i><i>✦</i><i>✧</i><i>✦</i>':''}</div><div class="tx"><b style="color:${x.color}">${selLabel(x.pid)}</b>　<b>${sc}点</b><br>${rankText(x.p,x.mt).join('<br>')}${x.mt&&!x.mt.ok?'<br><span class="hint">（獣害の手がかりは準備中のため、減点していません）</span>':''}</div></div>`; }).join('');
     // マウスは重ねると出る（押すと出したままにする）。スマホは押すと出て、ほかを押すと消える
     box.querySelectorAll('.bd').forEach(b=>{ const x=rows[+b.dataset.i];
       b.onpointerenter=e=>{ if(e.pointerType==='mouse'&&rkTipFor!==b) rankTip(b,x,false); };
