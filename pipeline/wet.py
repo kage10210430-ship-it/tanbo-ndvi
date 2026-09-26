@@ -8,7 +8,8 @@
   乾き : 衛星（GEE）。田に作物のない時期（春 3/1〜4/25・秋 10/10〜12/10、2022年から）の晴れた日・レーダーの日ごとに、
          同じ日の周り 6km 四方の畑・田（ESA WorldCover の耕地）の中央値と比べて、どれだけ暗い（SWIR, Sentinel-2 B12）・
          レーダーの反射が強い（Sentinel-1 VV）・水が溜まっている かを数える（雨の日の違い・軌道の違いを打ち消す）。
-         雪の日（ERA5-Land 積雪 > 5mm）・凍った日（レーダー）・周りが一面水の日は使わない。前2日の雨が 1mm 未満の日だけの値も別に持つ
+         雪の日（画素の雪・SCL の雪、ERA5-Land の積雪）・凍った日（レーダー）・周りが一面水の日は使わない。
+         観測の時刻から前48時間の雨（ERA5-Land 1時間ごと）が 1mm 未満の日だけの値も別に持つ
          → 湿りやすさの指数 wi（標準偏差の単位。0 = 周りのふつう、+ ほど乾きにくい）
 
 cells/<id>/wet.png : 格子は trend.png と同じ（grid_for(cell.bbox), EPSG:3857, 約10m）。layers の順に縦に積んだグレースケール（0 = なし）
@@ -19,9 +20,12 @@ cells/<id>/wet.json:
    "soil":{"src","tried","names":{記号: 名前}, "match":[色が一致した%, 近い色%], "p":{pid:[軟らかさ×100|null, 主な記号, 不明%, 主な記号の割合%]} | null},
    "terr":{"src","tried","cover":[5a%,5b/5c%,10m%], "p":{pid:[標高cm, 周りの田との差cm, 周りの中の低さ%, 低い所%, 低い所の向き(8方位 北=0, なし −1),
                                                      田の中の凹凸cm, 山際%, TWI×10, 元(0=5aレーザー,1=5b/5c,2=10m,3=GEE 30m)]} | null},
-   "wet":{"src","seasons":[済んだ時期], "fail":{時期: 失敗回数}, "p":{pid:[wi中央値×100, wi上位1割×100, wi>1 の割合%, 乾いた日の SWIR の差×1000|null,
+   "wet":{"src","seasons":[済んだ時期], "fail":{時期: [失敗回数, 最後に失敗した日]}, "p":{pid:[wi中央値×100, wi上位1割×100, wi>1 の割合%, 乾いた日の SWIR の差×1000|null,
                                                                   レーダーの差 dB×10|null, 水が見えた割合%|null, 使った観測の数]}}}
-  土・地形は1回だけ（取れなかったら RETRY_DAYS 日あとにもう一度）。乾きは新しい時期が終わってデータがそろったら全部の時期で作り直す。
+cells/<id>/wet_sum.npz: 乾きの時期ごとの合計を足したもの（int32, 田の外は0。キー s2_A, s1_N … と seasons）。
+  新しい時期が終わったら、その時期だけ GEE で取って足す（古い時期は取り直さない。wet_seasons は最初に取る時期の数）
+  土・地形は1回だけ（取れなかったら RETRY_DAYS 日あとにもう一度）。乾きで2回続けて失敗した時期も RETRY_DAYS 日あとにもう一度。
+  trend.py からは2回に分けて呼ぶ: 先に全セルの土・地形（タイルだけで軽い）、残りの時間で乾き（GEE で重い）。
 --backend fake（trend.py）では FakeTiles・FakeSat（作り物のデータ）で作る。GEE の確かめは  python pipeline/wet.py --probe --cells <id>
 """
 import os, io, math, time, json, threading, datetime as dt
@@ -53,7 +57,11 @@ SEAS = (("pre", "03-01", "04-25"), ("post", "10-10", "12-10"))
 WATER_LAST = "04-16"              # 春は 4/15 までの水だけ数える（そのあとは代かき前の水入れ）
 NDVI_BARE = 0.35; C2 = 0.6; C1 = 6.0
 REF_DEG = (0.033, 0.027)          # 周りの比べる範囲（セルの中心から ±経度, ±緯度）: 約 6km 四方
-REF_SCALE = 40; MIN_REF = 500; THR_CLR = 0.15; THR_SNOW = 0.03; THR_WF = 0.25; DRY_MM = 1.0; SNOW_M = 0.005; FROZEN_K = 273.65; MAX_ZEN = 65
+REF_SCALE = 40; MIN_REF = 150; THR_CLR = 0.15; THR_SNOW = 0.03; THR_WF = 0.25; DRY_MM = 1.0; FROZEN_K = 273.65; MAX_ZEN = 65
+SNOW_M = {"s2": 0.02, "s1": 0.005}  # ERA5 の積雪（m, セルの中心の格子）。S2 は画素ごとの雪も見るのでゆるく、雪の見えないレーダーはきびしく
+RAIN_H = 48                       # 観測の時刻から前 48 時間の雨（ERA5-Land 1時間ごと）
+BARE_PCT = {"pre": 50, "post": 20}  # 裸地の田: 時期の NDVI のこの百分位 ≤ 0.35（春は麦を除く・秋はひこばえがあっても刈った後の田を残す）
+ERA = "ECMWF/ERA5_LAND/HOURLY"
 NAMES = ["A", "N", "Ad", "Nd", "W", "Nw"]
 SC = {"s2": [100, 1, 100, 1, 1, 1], "s1": [10, 1, 10, 1, 1, 1]}   # int16 で受け取るための倍率
 SIG = {"s2d": 0.08, "s2": 0.08, "r": 1.0}                            # 指数にするときの目盛り（県全体の田の標準偏差に合わせ直す）
@@ -70,7 +78,8 @@ def season_dates(k):
 
 
 def ready_seasons(cfg, last):
-    """ERA5-Land（雪・雨）が last の日まであるときに、作れる時期（新しい方から wet_seasons 個）"""
+    """ERA5-Land（雪・雨）が last の日まであるときに、作れる時期（新しい方から wet_seasons 個。
+    それより古い時期でも、一度足したものは wet_sum.npz に残る）"""
     if not last:
         return []
     out = []
@@ -633,7 +642,7 @@ class GEEWet:
 
     def era5_last(self, today):
         ee = self.ee; t = time.time() * 1000
-        c = ee.ImageCollection("ECMWF/ERA5_LAND/DAILY_AGGR").filterDate(ee.Date(t).advance(-400, "day"), ee.Date(t).advance(1, "day"))
+        c = ee.ImageCollection(ERA).filterDate(ee.Date(t).advance(-150, "day"), ee.Date(t).advance(1, "day"))
         v = with_retry(lambda: c.aggregate_max("system:time_start").getInfo())
         return dt.datetime.fromtimestamp(v / 1000, dt.timezone.utc).date() if v else None
 
@@ -653,15 +662,16 @@ class GEEWet:
         ee = self.ee
         return ee.Number(ee.Algorithms.If(ee.Algorithms.IsEqual(x, None), fill, x))
 
-    def _era(self, d0, rect):
-        """その日の前2日の雨（mm）・前日と当日の積雪（m）・地面の温度の最低（K）"""
-        ee = self.ee; e = ee.ImageCollection("ECMWF/ERA5_LAND/DAILY_AGGR")
+    def _era(self, t, rect):
+        """観測の時刻 t（ms）の前 RAIN_H 時間の雨（mm）・前24時間の積雪の最大（m）・前12時間の地面の温度の最低（K）。
+        セルの中心の ERA5-Land の格子（約9km）の値。日の区切り（UTC）に関係なく、レーダーの夜の観測の直前の雨も数える"""
+        ee = self.ee; e = ee.ImageCollection(ERA); t = ee.Date(t)
         def band(col, b):
             return ee.ImageCollection([ee.Image.constant(0).toDouble().rename(b).updateMask(0)]).merge(col.select([b]))
-        w = e.filterDate(d0.advance(-1, "day"), d0.advance(1, "day"))
-        img = ee.Image.cat(band(e.filterDate(d0.advance(-2, "day"), d0), "total_precipitation_sum").sum().multiply(1000).rename("p"),
-                           band(w, "snow_depth").max().rename("sd"), band(w, "soil_temperature_level_1_min").min().rename("st"))
-        v = ee.Dictionary(img.reduceRegion(ee.Reducer.mean(), rect.centroid(100).buffer(12000), 11132))
+        img = ee.Image.cat(band(e.filterDate(t.advance(-RAIN_H, "hour"), t), "total_precipitation_hourly").sum().multiply(1000).rename("p"),
+                           band(e.filterDate(t.advance(-24, "hour"), t.advance(1, "hour")), "snow_depth").max().rename("sd"),
+                           band(e.filterDate(t.advance(-12, "hour"), t.advance(1, "hour")), "soil_temperature_level_1").min().rename("st"))
+        v = ee.Dictionary(img.reduceRegion(ee.Reducer.first(), rect.centroid(100), 11132))
         return {"p": self._num(v.get("p"), 999), "sd": self._num(v.get("sd"), 0), "st": self._num(v.get("st"), 300)}
 
     def _crop(self):
@@ -672,7 +682,7 @@ class GEEWet:
         return ee.Reducer.median().combine(ee.Reducer.count(), "", True)
 
     def _s2(self, box, a, b, post):
-        """(合計の画像 6バンド, 裸地（時期の NDVI 上位2割 ≤ 0.35）の画像, 日ごとの画像の集まり)"""
+        """(合計の画像 6バンド, 裸地（時期の NDVI の BARE_PCT 百分位 ≤ 0.35）の画像, 日ごとの画像の集まり)"""
         ee = self.ee; B = self.b; thr = B.cfg.get("cloud_score_min", 0.6)
         rect = ee.Geometry.Rectangle(box); crop = self._crop(); dem = ee.Image("USGS/SRTMGL1_003")
         def prep(i):
@@ -681,24 +691,28 @@ class GEEWet:
             snow = mn.gt(0.4).And(r.select("B3").gt(0.15))
             # 山の影（冬の低い太陽）は SWIR が暗くなって湿って見えるので除く
             lit = ee.Terrain.hillShadow(dem, i.getNumber("MEAN_SOLAR_AZIMUTH_ANGLE"), i.getNumber("MEAN_SOLAR_ZENITH_ANGLE"), 100).focalMin(2)
-            ok = i.select("cs_cdf").gte(thr).And(scl.remap([0, 1, 3, 8, 9, 10, 11], [0] * 7, 1)).And(lit)
+            cf = i.select("cs_cdf").gte(thr).And(lit)                  # 雲・影のない画素（SCL で雪を除く前）
+            ok = cf.And(scl.remap([0, 1, 3, 8, 9, 10, 11], [0] * 7, 1))
             v = ok.And(nd.lt(NDVI_BARE)).And(snow.Not())
             wat = ok.And(mn.gt(0)).And(r.select("B8").lt(0.15)).And(snow.Not())
-            return (ee.Image.cat(r.select("B12").max(1e-3).log().rename("L"), v.rename("v"), wat.rename("w"), snow.And(ok).rename("sn"),
-                                 ok.rename("ok"), nd.rename("nd"))
-                    .updateMask(ok).set("day", ee.Date(i.get("system:time_start")).format("YYYY-MM-dd")))
+            sn = snow.Or(scl.eq(11)).And(cf)                            # 雪: 自分の判定と SCL の雪のどちらか（雲のない所で）
+            # L・nd は使える画素だけ。ほかは 0/1 のまま残す（雪・雲の割合を数えるため）
+            return (ee.Image.cat(r.select("B12").max(1e-3).log().updateMask(ok).rename("L"), v.rename("v"), wat.rename("w"), sn.rename("sn"),
+                                 ok.rename("ok"), cf.rename("cf"), nd.updateMask(ok).rename("nd"))
+                    .set({"day": ee.Date(i.get("system:time_start")).format("YYYY-MM-dd"), "system:time_start": i.get("system:time_start")}))
         col = (B._raw(box, a, b, "s2").filter(ee.Filter.lt("MEAN_SOLAR_ZENITH_ANGLE", MAX_ZEN))
                .linkCollection(B._csp(box, a, b), ["cs_cdf"]).map(prep))
         def per_day(ds):
-            ds = ee.String(ds); img = col.filter(ee.Filter.eq("day", ds)).mosaic(); d0 = ee.Date(ds); era = self._era(d0, rect)
+            ds = ee.String(ds); dc = col.filter(ee.Filter.eq("day", ds)); img = dc.mosaic(); era = self._era(dc.aggregate_max("system:time_start"), rect)
             v = img.select("v").unmask(0); w = img.select("w").unmask(0); okb = img.select("ok").unmask(0); sn = img.select("sn").unmask(0)
+            cfb = img.select("cf").unmask(0)
             L = img.select("L")
             M = L.updateMask(v.And(w.Not()).And(crop)).reduceRegion(self._medcnt(), rect, REF_SCALE, bestEffort=True, tileScale=2)
-            fr = ee.Image.cat(okb.rename("c"), w.rename("w"), sn.rename("sn")).updateMask(crop).reduceRegion(
+            fr = ee.Image.cat(okb.rename("c"), w.rename("w"), sn.rename("sn"), cfb.rename("cf")).updateMask(crop).reduceRegion(
                 ee.Reducer.mean(), rect, REF_SCALE, bestEffort=True, tileScale=2)
             cnt = self._num(M.get("L_count"), 0); clr = self._num(fr.get("c"), 0)
-            wf = self._num(fr.get("w"), 0).divide(clr.max(1e-3)); sf = self._num(fr.get("sn"), 0).divide(clr.max(1e-3))
-            okd = cnt.gte(MIN_REF).And(clr.gte(THR_CLR)).And(sf.lte(THR_SNOW)).And(era["sd"].lte(SNOW_M))
+            wf = self._num(fr.get("w"), 0).divide(clr.max(1e-3)); sf = self._num(fr.get("sn"), 0).divide(self._num(fr.get("cf"), 0).max(1e-3))
+            okd = cnt.gte(MIN_REF).And(clr.gte(THR_CLR)).And(sf.lte(THR_SNOW)).And(era["sd"].lte(SNOW_M["s2"]))
             dry = ee.Image.constant(era["p"].lt(DRY_MM))
             wel = ee.Image.constant(wf.lte(THR_WF).And(ee.Number(1) if post else ds.slice(5).compareTo(WATER_LAST).lt(0)))
             an = ee.Image.constant(self._num(M.get("L_median"), 0)).subtract(L).clamp(-C2, C2).multiply(v).unmask(0)
@@ -709,7 +723,8 @@ class GEEWet:
         zero = ee.Image.constant([0] * 6).rename(NAMES).toFloat()
         nd = ee.ImageCollection([ee.Image.constant(0).toFloat().rename("nd").updateMask(0)]).merge(
             col.map(lambda i: i.select("nd").updateMask(i.select("sn").unmask(0).Not()).toFloat()))
-        bare = nd.reduce(ee.Reducer.percentile([80])).lte(NDVI_BARE)
+        q = BARE_PCT["post" if post else "pre"]
+        bare = nd.reduce(ee.Reducer.percentile([q])).lte(NDVI_BARE)
         return ee.ImageCollection([zero]).merge(days).sum(), bare, days
 
     def _s1(self, box, a, b, post, bare):
@@ -719,19 +734,20 @@ class GEEWet:
             vvs = ee.Image(10).pow(vv.divide(10)).focalMean(1, "square", "pixels").log10().multiply(10)
             val = vv.gt(-30).And(bare.unmask(vh.subtract(vv).lte(-7.5)))   # 麦など緑のある田は除く（S2 がない所は VH−VV で）
             return (ee.Image.cat(vvs.rename("S"), val.rename("v")).updateMask(vv.mask())
-                    .set("k", ee.Date(i.get("system:time_start")).format("YYYY-MM-dd").cat("_").cat(ee.String(i.get("orbitProperties_pass")))))
+                    .set({"k": ee.Date(i.get("system:time_start")).format("YYYY-MM-dd").cat("_").cat(ee.String(i.get("orbitProperties_pass"))),
+                          "system:time_start": i.get("system:time_start")}))
         col = (ee.ImageCollection("COPERNICUS/S1_GRD").filterBounds(rect).filterDate(a, b).filter(ee.Filter.eq("instrumentMode", "IW"))
                .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VV"))
                .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VH")).map(prep))
         def per_k(k):
-            k = ee.String(k); img = col.filter(ee.Filter.eq("k", k)).mosaic(); d0 = ee.Date(k.slice(0, 10)); era = self._era(d0, rect)
+            k = ee.String(k); dc = col.filter(ee.Filter.eq("k", k)); img = dc.mosaic(); era = self._era(dc.aggregate_max("system:time_start"), rect)
             S = img.select("S"); v = img.select("v").unmask(0)
             M = S.updateMask(v.And(S.gt(-18)).And(crop)).reduceRegion(self._medcnt(), rect, REF_SCALE, bestEffort=True, tileScale=2)
             med = self._num(M.get("S_median"), 0); cnt = self._num(M.get("S_count"), 0)
             wat = S.lt(-18).And(S.subtract(med).lt(-4)).And(v).unmask(0)
             fr = ee.Image.cat(v.rename("c"), wat.rename("w")).updateMask(crop).reduceRegion(ee.Reducer.mean(), rect, REF_SCALE, bestEffort=True, tileScale=2)
             clr = self._num(fr.get("c"), 0); wf = self._num(fr.get("w"), 0).divide(clr.max(1e-3))
-            okd = cnt.gte(MIN_REF).And(clr.gte(THR_CLR)).And(era["sd"].lte(SNOW_M)).And(era["st"].gte(FROZEN_K))
+            okd = cnt.gte(MIN_REF).And(clr.gte(THR_CLR)).And(era["sd"].lte(SNOW_M["s1"])).And(era["st"].gte(FROZEN_K))
             dry = ee.Image.constant(era["p"].lt(DRY_MM))
             wel = ee.Image.constant(wf.lte(THR_WF).And(ee.Number(1) if post else k.slice(5, 10).compareTo(WATER_LAST).lt(0)))
             n1 = v.And(wat.Not()); an = S.subtract(med).clamp(-C1, C1).multiply(n1).unmask(0)
@@ -946,7 +962,8 @@ def main():
     b = GEEBackend(cfg); sat = GEEWet(b, GEEPixels(b)); today = dt.datetime.now(dt.timezone.utc).date()
     last = sat.era5_last(today); ready = ready_seasons(cfg, last)
     print("ERA5-Land の最後の日:", last, "作れる時期:", ready)
-    print("ERA5 のバンド:", with_retry(lambda: b.ee.ImageCollection("ECMWF/ERA5_LAND/DAILY_AGGR").first().bandNames().getInfo()))
+    bands = with_retry(lambda: b.ee.ImageCollection(ERA).first().bandNames().getInfo())
+    print("ERA5 のバンド（使うもの）:", {n: n in bands for n in ("total_precipitation_hourly", "snow_depth", "soil_temperature_level_1")})
     for cid in args.cells.split(","):
         cell = next(c for c in index["cells"] if c["id"] == cid); g = grid_for(cell["bbox"])
         for k in (args.seasons.split(",") if args.seasons else ready[-2:]):
