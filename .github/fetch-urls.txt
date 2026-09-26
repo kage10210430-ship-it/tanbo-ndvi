@@ -1,8 +1,5 @@
-# 土壌図タイルの確認（福井 36.06N 136.2E）
-https://soil-inventory.rad.naro.go.jp/tile/figure/15/28781/12860.png
-https://soil-inventory.rad.naro.go.jp/tile/figure/14/14390/6430.png
-https://soil-inventory.rad.naro.go.jp/tile/figure/12/3597/1607.png
-https://soil-inventory.dc.affrc.go.jp/tile/figure/14/14390/6430.png
-https://soil-inventory.rad.naro.go.jp/tile/figure/10/899/401.png
-https://soil-inventory.rad.naro.go.jp/figure.html
-https://soil-inventory.rad.naro.go.jp/
+# 土地分類基本調査（20万分の1）福井県の土壌図の確認
+https://nlftp.mlit.go.jp/kokjo/tochimizu/F2/GIS/18.zip
+https://nlftp.mlit.go.jp/kokjo/inspect/landclassification/download.html
+https://nlftp.mlit.go.jp/kokjo/inspect/landclassification/land/5-1/prefecture18.html
+https://cyberjapandata.gsi.go.jp/xyz/swale/14/14390/6430.png

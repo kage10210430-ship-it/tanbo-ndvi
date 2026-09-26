@@ -6,3 +6,4 @@ pyyaml>=6
 requests>=2.31
 pillow>=10
 numpy>=1.24
+pyshp>=2.3

@@ -22,7 +22,7 @@ jobs:
       - name: 道具
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils tesseract-ocr tesseract-ocr-jpn >/dev/null
-          pip install -q openpyxl xlrd pillow
+          pip install -q openpyxl xlrd pillow pyshp
       - name: 取ってくる
         env:
           URLS: ${{ inputs.urls }}
@@ -45,6 +45,27 @@ jobs:
                   for g in $(ls $f.p*.pgm | head -n 2); do tesseract $g - -l jpn --psm 4 2>/dev/null; done; } > $f.txt
               fi
               sed 's/[[:space:]]*$//' $f.txt | grep -v '^$' | head -n 1500
+            elif case "$u" in *.zip) true;; *) false;; esac; then   # ZIP（地図データ）は中身の一覧と、shapefile の項目・値の例を出す
+              python3 - "$f.bin" <<'PY'
+          import sys, zipfile, io, collections, shapefile
+          z = zipfile.ZipFile(sys.argv[1])
+          for i in z.infolist(): print("FILE", i.filename, i.file_size)
+          for n in z.namelist():
+              if n.lower().endswith(".prj"): print("PRJ", n, z.read(n)[:300])
+              if not n.lower().endswith(".shp"): continue
+              b = n[:-4]; get = lambda e: next((io.BytesIO(z.read(x)) for x in z.namelist() if x.lower() == (b + e).lower()), None)
+              for enc in ("cp932", "utf-8"):
+                  try:
+                      r = shapefile.Reader(shp=get(".shp"), dbf=get(".dbf"), shx=get(".shx"), encoding=enc)
+                      print("SHP", n, enc, r.shapeTypeName, len(r), [round(v, 4) for v in r.bbox], [f[0] for f in r.fields[1:]])
+                      recs = r.records()
+                      for k, f in enumerate(r.fields[1:]):
+                          c = collections.Counter(str(x[k]) for x in recs)
+                          print("  FIELD", f[0], f[1], len(c), c.most_common(40))
+                      break
+                  except Exception as e:
+                      print("ERR", n, enc, e)
+          PY
             elif head -c 4 $f.bin | grep -q 'PK' || head -c 4 $f.bin | od -An -tx1 | grep -q 'd0 cf 11 e0'; then   # Excel（xlsx / xls）は表を文字にする
               python3 - "$f.bin" <<'PY'
           import sys, shutil
