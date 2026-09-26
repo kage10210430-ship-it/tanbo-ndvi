@@ -1088,6 +1088,24 @@ const TREND_MIN_YEARS=2;
 //   → ずっと大人しい所・後半に落ちる所は低く、出だしが遅くても毎回後半に追いつく所（田面が深いなど）は低くならない
 //   前半・後半の片方しか見えない年は、見えた方の値。表示はその田の中の差に合わせた目盛り（最低 ±TREND_MIN_SPAN）
 const TREND_MIN_SPAN=0.02;
+// 表示はほかの田と比べられるよう、絶対表示の考え方で目盛りを固定（±TREND_ABS_SPAN）。画素の値 =（その画素の NDVI − 地区の基準）÷ 地区の基準 を稲の年で平均
+//   その画素の NDVI = その年・時期のその田の中央値 + 田の中央値との差。地区の基準 = 同じセルの稲の田の中央値の中央値（年・時期ごと。天候の差を除く）
+//   0 = 地区のふつうの田（田ごとの値の地区の中央値にそろえる）
+//   田の中のばらつき・深い所（圃場の評価）は、これまでどおりその田の中の差から計算する
+const TREND_ABS_SPAN=0.2;
+function trendRef(r){   // {'2024e': 地区の基準, ...}
+  if(r._ref) return r._ref; const acc={}, ref={};
+  for(const q in r.m.p){ const rs=r.m.p[q], cq=cropsOf(q,r);
+    for(const y in rs) if(cq[y]==='稲') for(const [w,i] of [['e',4],['l',6]]) if(rs[y][i-1]>0&&rs[y][i]!=null) (acc[y+w]=acc[y+w]||[]).push(rs[y][i]/1000); }
+  const med=a=>{ a.sort((x,y)=>x-y); return a[Math.floor(a.length/2)]; };
+  for(const k in acc) ref[k]=med(acc[k]);
+  // 田の値の組み合わせ（後半に伸びたら L、伸びなければ (E+L)/2）は上に寄るので、田の中央値で同じ計算をした値の地区の中央値を 0 にそろえる
+  const F=[]; for(const q in r.m.p){ const rs=r.m.p[q], cq=cropsOf(q,r); let s=0,n=0;
+    for(const y in rs){ if(cq[y]!=='稲') continue; const e=rs[y][3]>0&&ref[y+'e']?(rs[y][4]/1000-ref[y+'e'])/ref[y+'e']:null, l=rs[y][5]>0&&ref[y+'l']?(rs[y][6]/1000-ref[y+'l'])/ref[y+'l']:null;
+      if(e==null&&l==null) continue; s+=e==null?l:l==null?e:(l>=e?l:(e+l)/2); n++; }
+    if(n) F.push(s/n); }
+  ref.off=F.length?med(F):0;
+  return r._ref=ref; }
 const trCache={};
 function isTrend(m){ return m==='trend'; }
 function trLoad(cell){
@@ -1127,21 +1145,24 @@ function cropsOf(pid,r){   // {年: 作物}
   for(const y in rows) out[y]=y in ci?ci[y].c:cropOf(rows[y],sm.sp[y],sm.au[y]); return out; }
 function drawTrend(pid,r){   // 戻り値 {years: 重ねた稲の年, rice: 稲と見分けた年（画素がない年も）, mugi, other, known: 手がかりがある年の数, span: 目盛り（0なら描けなかった）}
   const {m,g}=r, rows=m.p[pid]||{}, ys=Object.keys(rows).sort(), cr=cropsOf(pid,r), rice=ys.filter(y=>cr[y]==='稲');
-  const lay=(y,w)=>rows[y][w==='e'?3:5]>0&&m.layers.includes(y+w)?{k:m.layers.indexOf(y+w),b:Math.max(0.05,rows[y][w==='e'?4:6]/1000)}:null;
+  const ref=trendRef(r), lay=(y,w)=>{ if(!(rows[y][w==='e'?3:5]>0&&m.layers.includes(y+w))) return null; const b=Math.max(0.05,rows[y][w==='e'?4:6]/1000); return {k:m.layers.indexOf(y+w),b,ref:ref[y+w]||b}; };
   const yrs=rice.map(y=>[y,lay(y,'e'),lay(y,'l')]).filter(([,e,l])=>e||l);
   const out={years:yrs.map(x=>x[0]),rice,mugi:ys.filter(y=>cr[y]==='麦'),fallow:ys.filter(y=>cr[y]==='休'),other:ys.filter(y=>cr[y]==='他'),known:ys.filter(y=>cr[y]).length,span:0};
   if(!g||yrs.length<TREND_MIN_YEARS) return out;
   const R=pxRegion(pid,m); if(!R) return out; const {c0,r0,cw,ch,inside}=R;
   const at=(o,y,x)=>{ if(!o) return null; const v=g[(o.k*m.h+r0+y)*m.w+c0+x]; return v>0?((v-1)/254*0.6-0.3)/o.b:null; };   // その年のその田の中央値との差（%）
-  const val=new Float32Array(cw*ch).fill(NaN), oks=[], EL=[]; let nin=0;
-  for(let y=0;y<ch;y++) for(let x=0;x<cw;x++){ if(!inside(c0+x+.5,r0+y+.5)) continue; nin++; let s=0,n=0,se=0,ne=0,sl=0,nl=0;
+  const atA=(o,y,x)=>{ if(!o) return null; const v=g[(o.k*m.h+r0+y)*m.w+c0+x]; return v>0?(o.b+(v-1)/254*0.6-0.3-o.ref)/o.ref:null; };   // 地区の基準との差（%）
+  const val=new Float32Array(cw*ch).fill(NaN), aval=new Float32Array(cw*ch).fill(NaN), oks=[], aoks=[], EL=[]; let nin=0;
+  for(let y=0;y<ch;y++) for(let x=0;x<cw;x++){ if(!inside(c0+x+.5,r0+y+.5)) continue; nin++; let s=0,n=0,se=0,ne=0,sl=0,nl=0,sa=0;
     for(const [,oe,ol] of yrs){ const e=at(oe,y,x), l=at(ol,y,x); if(e==null&&l==null) continue;
-      s+=e==null?l:l==null?e:(l>=e?l:(e+l)/2); n++; if(e!=null){se+=e;ne++;} if(l!=null){sl+=l;nl++;} }
-    if(n){ val[y*cw+x]=s/n; oks.push(s/n); if(ne&&nl) EL.push([se/ne,sl/nl]); } }
+      s+=e==null?l:l==null?e:(l>=e?l:(e+l)/2); n++; if(e!=null){se+=e;ne++;} if(l!=null){sl+=l;nl++;}
+      const ea=atA(oe,y,x), la=atA(ol,y,x); sa+=ea==null?la:la==null?ea:(la>=ea?la:(ea+la)/2); }
+    if(n){ val[y*cw+x]=s/n; oks.push(s/n); aval[y*cw+x]=sa/n; aoks.push(sa/n); if(ne&&nl) EL.push([se/ne,sl/nl]); } }
   if(!nin||oks.length<Math.max(3,nin*0.1)) return out;       // 縁（約8m）は計算に使っていないので、内側に少しでもあれば描く（縁は内側の値でうめる）
   const mean=oks.reduce((a,b)=>a+b,0)/oks.length, devs=oks.map(x=>Math.abs(x-mean)).sort((a,b)=>a-b);
   out.span=Math.max(TREND_MIN_SPAN,devs[Math.floor(0.95*(devs.length-1))]||0);
-  pxOverlay(R,m,val,v=>relColor((v-mean)/out.span),mean,bandOn()?{kind:'rel',t:v=>(v-mean)/out.span}:null);
+  for(let i=0;i<aval.length;i++) aval[i]-=ref.off; const amean=aoks.reduce((a,b)=>a+b,0)/aoks.length-ref.off; out.amean=amean;
+  pxOverlay(R,m,aval,v=>relColor(v/TREND_ABS_SPAN),amean,bandOn()?{kind:'rel',t:v=>v/TREND_ABS_SPAN}:null);
   const sd=oks.map(x=>x-mean).sort((a,b)=>a-b); out.spread=sd[Math.floor(0.9*(sd.length-1))]-sd[Math.floor(0.1*(sd.length-1))];   // 田の中のばらつき（上下1割を除いた幅）
   if(EL.length>=3){ const mE=EL.reduce((a,p)=>a+p[0],0)/EL.length, mL=EL.reduce((a,p)=>a+p[1],0)/EL.length;
     out.deep=EL.filter(([e,l])=>e-mE<=-0.03&&(l-mL)-(e-mE)>=0.04).length/EL.length; } else out.deep=0;   // 前半に出遅れて後半に大きく追いつく所
@@ -1305,8 +1326,7 @@ async function renderTrend(gen,mode,note,lbl){
     const t=drawTrend(s.pid,r); one=t;
     if(t.span){ used.push(t.years.length); spans.push(t.span); ranked.push({pid:s.pid,color:s.color,r,t}); P.layer.setStyle({fillOpacity:0}); P.layer._stk=''; } else few++; }
   renderRanks(gen,ranked);
-  if(spans.length){ const f=x=>Math.round(x*100), a=f(Math.min(...spans)), b=f(Math.max(...spans));
-    lbl.innerHTML=`<span>生育弱傾向（−${a===b?a:a+'〜'+b}%）</span><span>${spans.length>1?'田ごとに自動':'この田の中の差'}</span><span>（+${a===b?a:a+'〜'+b}%）生育良傾向</span>`; }
+  if(spans.length){ const f=Math.round(TREND_ABS_SPAN*100); lbl.innerHTML=`<span>生育弱傾向（−${f}%）</span><span>地区の平均（稲の年）</span><span>（+${f}%）生育良傾向</span>`; }
   const msg=[];
   const ex=one?[one.mugi.length?'麦 '+one.mugi.join('・'):'',one.fallow.length?'休耕か草 '+one.fallow.join('・'):'',one.other.length?'その他 '+one.other.join('・'):''].filter(Boolean).join('、'):'';
   if(selected.length>1&&used.length) msg.push(`田ごとに稲の年だけを重ねています（${Math.min(...used)===Math.max(...used)?Math.min(...used):Math.min(...used)+'〜'+Math.max(...used)}回）`);
@@ -1319,7 +1339,7 @@ async function renderPx(){
   const bar=document.getElementById('lgBar'), lbl=document.getElementById('lgLbl');
   bar.classList.toggle('rel',mode==='rel'||isTrend(mode));
   bar.style.background=bandOn()&&selected.length&&document.getElementById('colorOn').checked?bandBar(mode==='abs'?'abs':'rel'):'';
-  lbl.innerHTML=mode==='rel'?'<span>その田の平均より低い</span><span>田の中の差</span><span>高い</span>':isTrend(mode)?'<span>生育弱傾向</span><span>稲の年の傾向</span><span>生育良傾向</span>':'<span>低い 0.2</span><span>NDVI</span><span>0.9 高い</span>';
+  lbl.innerHTML=mode==='rel'?'<span>その田の平均より低い</span><span>田の中の差</span><span>高い</span>':isTrend(mode)?'<span>生育弱傾向</span><span>地区の平均（稲の年）</span><span>生育良傾向</span>':'<span>低い 0.2</span><span>NDVI</span><span>0.9 高い</span>';
   pxLayer.clearLayers(); if(!isTrend(mode)||!selected.length||!on){ const b=document.getElementById('rankBox'); b.style.display='none'; b.innerHTML=''; }
   if(!on){ note.textContent=''; return; }
   if(!selected.length){ note.textContent=isTrend(mode)?'田んぼを選ぶと、その中の生育の傾向（稲の年だけを重ねたもの）を色分けします':'田んぼを選ぶと、その中を10m画素で色分けします'; return; }
