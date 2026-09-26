@@ -439,6 +439,21 @@ def main():
                     made = made + wm if made >= 0 else made
                 except Exception as e:
                     log(f"獣害の手がかり エラー {e}"); made = made or -1
+            # 機械のハマりやすさの手がかり（土壌図・標高タイルは Actions から HTTP、乾きは GEE）。土・地形は1回だけ、乾きは新しい時期がそろったら作り直す
+            if cfg.get("wet_maps") and limit - (time.time() - t2) > 60:
+                import wet
+                try:
+                    hsrc = wet.sources(cfg, args.backend, b if args.backend == "gee" else None, src.px if args.backend == "gee" else None, log)
+                    ready = wet.ready_seasons(cfg, hsrc.sat.era5_last(today)) if hsrc.sat else []
+                    log(f"ハマりやすさ: 乾きを作る時期 {ready[0] + '〜' + ready[-1] if ready else 'なし'}")
+                    hm = run_all(src, cfg, data_dir, cells, today, mask_id(cfg), log, limit - (time.time() - t2), args.workers,
+                                 task=lambda c, dl: wet.update_cell(hsrc, cfg, data_dir, index, c, today, ready, log, dl),
+                                 need=lambda c: wet.need(data_dir, c, today, ready), name="ハマりやすさ")
+                    made = made + hm if made >= 0 else made
+                    if getattr(hsrc.tiles, "stat", None):
+                        log(f"ハマりやすさ: タイル {hsrc.tiles.stat}")
+                except Exception as e:
+                    log(f"ハマりやすさ エラー {e}"); made = made or -1
             # 田の形（変形田の手がかり）。区画の形だけから作るので GEE は使わない。形が変わらなければ1回だけ
             import shape
             try:

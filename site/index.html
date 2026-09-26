@@ -780,7 +780,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
     <div class="maphint" id="maphint">地図を拡大すると区画が表示されます</div>
     <div class="mapbar">
       <div class="ctl" style="margin:0"><span id="dateCtl" style="display:inline-flex;gap:6px;align-items:center"><span>色の日付</span><select id="colorDate"></select></span><label><input type="checkbox" id="colorOn" checked>区画を色分け</label></div>
-      <div class="ctl" style="margin:4px 0 0"><span>塗り方</span><select id="fillMode"><option value="abs" selected>絶対表示</option><option value="rel">相対表示</option><option value="trend">生育傾向マップ</option></select><label title="色を段階に分け、境目に線を引いて、ゾーンで見やすくする（外すと10m画素のまま）"><input type="checkbox" id="bandOn" checked>ゾーン表示</label><span class="pxnote" id="pxNote"></span></div>
+      <div class="ctl" style="margin:4px 0 0"><span>塗り方</span><select id="fillMode"><option value="abs" selected>絶対表示</option><option value="rel">相対表示</option><option value="trend">生育傾向マップ</option><option value="wet">ハマりやすさマップ</option></select><label title="色を段階に分け、境目に線を引いて、ゾーンで見やすくする（外すと10m画素のまま）"><input type="checkbox" id="bandOn" checked>ゾーン表示</label><span class="pxnote" id="pxNote"></span></div>
       <div class="bar" id="lgBar"></div><div class="lbl" id="lgLbl"><span>低い 0.2</span><span>NDVI</span><span>0.9 高い</span></div>
     </div>
   </div>
@@ -802,7 +802,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
       </select>
       <label>移植日 <input type="date" id="tp"></label>
     </div>
-    <div class="hint" id="trendHint" style="display:none">生育傾向マップのときは、稲の年（2022年から）の 5/10〜9/30 の平均を表示します</div>
+    <div class="hint" id="trendHint" style="display:none">生育傾向マップ・ハマりやすさマップのときは、グラフは稲の年（2022年から）の 5/10〜9/30 の平均を表示します</div>
     <div class="status" id="status"></div>
     <div class="svgwrap"><svg class="chart" id="chart" viewBox="0 0 560 340" role="img" aria-label="NDVI推移"></svg><div class="tip" id="tip"></div></div>
     <div class="ctl"><button class="btn small" id="btnPng">グラフを画像で保存</button><span class="hint" id="note"></span></div>
@@ -881,7 +881,7 @@ function loadPackage(p, label){
   allDates=[...new Set(Object.values(p.series||{}).flat().map(r=>r[0]))].sort();
   detectOutliers();
   document.getElementById('meta').textContent=`${label||p.meta?.name||''}：${feats.length}区画 / ${allDates.length}観測日${allDates.length?'（'+allDates[0]+'〜'+allDates[allDates.length-1]+'）':''}`;
-  document.getElementById('foot').textContent=(p.meta?.source?'データ: '+p.meta.source+'。':'')+(p.meta?.attribution||'Contains modified Copernicus Sentinel data')+'。地図: 国土地理院。区画: 農林水産省 筆ポリゴン。NDVIは10m画素の区画平均で、0.8〜0.9で頭打ちになります。';
+  document.getElementById('foot').textContent=(p.meta?.source?'データ: '+p.meta.source+'。':'')+(p.meta?.attribution||'Contains modified Copernicus Sentinel data')+'。地図: 国土地理院。区画: 農林水産省 筆ポリゴン。土壌: 農研機構 日本土壌インベントリー（CC BY 4.0）。標高: 国土地理院 標高タイルを加工。NDVIは10m画素の区画平均で、0.8〜0.9で頭打ちになります。';
   buildColorDates(); refresh();
 }
 
@@ -1014,12 +1014,16 @@ function pxRegion(pid,m){   // 区画の形を格子の座標（列, 行）に�
 }
 // ゾーン表示: 10m画素の値を画素の中心どうしでなめらかにつなぎ（双一次補間）、段階（BANDS）に分けて塗り、段階の境目に線を引く（等高線のように）
 //   絶対表示: NDVI 0.1 ごと 7段階（0.3 未満〜0.8 以上）。相対表示・生育傾向: 目盛り（±span）を 7段階（中央 ±15%・±45%・±75%）
-const BANDS={abs:{edges:[0.3,0.4,0.5,0.6,0.7,0.8],mid:[0.25,0.35,0.45,0.55,0.65,0.75,0.85]},rel:{edges:[-0.75,-0.45,-0.15,0.15,0.45,0.75],mid:[-0.9,-0.6,-0.3,0,0.3,0.6,0.9]}};
+//   ハマりやすさ: 0.2・0.35・0.5・0.65 で5段階（乾きやすい・ふつう・やや湿る・湿りやすい・ハマりやすい）
+const BANDS={abs:{edges:[0.3,0.4,0.5,0.6,0.7,0.8],mid:[0.25,0.35,0.45,0.55,0.65,0.75,0.85]},rel:{edges:[-0.75,-0.45,-0.15,0.15,0.45,0.75],mid:[-0.9,-0.6,-0.3,0,0.3,0.6,0.9]},
+  wet:{edges:[0.2,0.35,0.5,0.65],mid:[0.1,0.28,0.43,0.58,0.8]}};
+const WET_MAX=0.85, WET_STOPS=[[232,217,176],[143,184,207],[31,78,140]];   // 砂色（乾きやすい）→ 濃い青（ハマりやすい）。0〜WET_MAX を並べる
+function wetColor(v){ const t=Math.max(0,Math.min(1,v/WET_MAX))*2, k=Math.min(1,Math.floor(t)), u=t-k, a=WET_STOPS[k], b=WET_STOPS[k+1]; return a.map((c,i)=>Math.round(c+(b[i]-c)*u)); }
 function bandOn(){ return document.getElementById('bandOn').checked; }
 try{ if(localStorage.getItem('bandOn')==='0') document.getElementById('bandOn').checked=false; }catch(e){}
-function bandCols(kind){ return BANDS[kind].mid.map(v=>kind==='abs'?rgbOf(ndviColor(v)):relColor(v)); }
+function bandCols(kind){ return BANDS[kind].mid.map(v=>kind==='abs'?rgbOf(ndviColor(v)):kind==='wet'?wetColor(v):relColor(v)); }
 function bandBar(kind){   // 凡例の段階の帯（絶対表示は 0.2〜0.9 の目盛りに合わせる）
-  const cols=bandCols(kind).map(c=>`rgb(${c.join(',')})`), E=BANDS[kind].edges, pos=kind==='abs'?E.map(e=>(e-0.2)/0.7*100):E.map(e=>(e+1)/2*100), st=[0,...pos,100];
+  const cols=bandCols(kind).map(c=>`rgb(${c.join(',')})`), E=BANDS[kind].edges, pos=kind==='abs'?E.map(e=>(e-0.2)/0.7*100):kind==='wet'?E.map(e=>e/WET_MAX*100):E.map(e=>(e+1)/2*100), st=[0,...pos,100];
   return `linear-gradient(90deg,${cols.map((c,i)=>`${c} ${st[i].toFixed(1)}% ${st[i+1].toFixed(1)}%`).join(',')})`; }
 function pxOverlay(R,m,val,color,fill,band){   // val（NaN=なし）を色にして、区画の形に切り抜いて地図に重ねる。band={kind, t: 値→段階の軸}（ゾーン表示）
   const {rings,c0,c1,r0,r1,cw,ch}=R;
@@ -1107,7 +1111,7 @@ function trendRef(r){   // {'2024e': 地区の基準, ...}
   ref.off=F.length?med(F):0;
   return r._ref=ref; }
 const trCache={};
-function isTrend(m){ return m==='trend'; }
+function isTrend(m){ return m==='trend'||m==='wet'; }   // ハマりやすさマップも、稲の年の生育傾向（深い所・圃場の評価）を使う
 function trLoad(cell){
   if(!(cell in trCache)) trCache[cell]=Promise.all([fetch(`${DATA}cells/${cell}/trend.json`).then(r=>r.ok?r.json():null),
       fetch(`${DATA}cells/${cell}/spring.json`).then(r=>r.ok?r.json():null).catch(()=>null), histLoad(cell),
@@ -1143,7 +1147,7 @@ function cropInfo(pid,r){   // {年: {c: 作物, p: 稲の確からしさ%, prov
 function cropsOf(pid,r){   // {年: 作物}
   const rows=(r&&r.m.p[pid])||{}, ci=cropInfo(pid,r), sm=seasonMins(pid,r), out={};
   for(const y in rows) out[y]=y in ci?ci[y].c:cropOf(rows[y],sm.sp[y],sm.au[y]); return out; }
-function drawTrend(pid,r){   // 戻り値 {years: 重ねた稲の年, rice: 稲と見分けた年（画素がない年も）, mugi, other, known: 手がかりがある年の数, span: 目盛り（0なら描けなかった）}
+function drawTrend(pid,r,noDraw){   // noDraw = 色を塗らずに計算だけ（ハマりやすさマップ用）。戻り値 {years: 重ねた稲の年, rice: 稲と見分けた年（画素がない年も）, mugi, other, known: 手がかりがある年の数, span: 目盛り（0なら描けなかった）}
   const {m,g}=r, rows=m.p[pid]||{}, ys=Object.keys(rows).sort(), cr=cropsOf(pid,r), rice=ys.filter(y=>cr[y]==='稲');
   const ref=trendRef(r), lay=(y,w)=>{ if(!(rows[y][w==='e'?3:5]>0&&m.layers.includes(y+w))) return null; const b=Math.max(0.05,rows[y][w==='e'?4:6]/1000); return {k:m.layers.indexOf(y+w),b,ref:ref[y+w]||b}; };
   const yrs=rice.map(y=>[y,lay(y,'e'),lay(y,'l')]).filter(([,e,l])=>e||l);
@@ -1157,15 +1161,16 @@ function drawTrend(pid,r){   // 戻り値 {years: 重ねた稲の年, rice: 稲�
     for(const [,oe,ol] of yrs){ const e=at(oe,y,x), l=at(ol,y,x); if(e==null&&l==null) continue;
       s+=e==null?l:l==null?e:(l>=e?l:(e+l)/2); n++; if(e!=null){se+=e;ne++;} if(l!=null){sl+=l;nl++;}
       const ea=atA(oe,y,x), la=atA(ol,y,x); sa+=ea==null?la:la==null?ea:(la>=ea?la:(ea+la)/2); }
-    if(n){ val[y*cw+x]=s/n; oks.push(s/n); aval[y*cw+x]=sa/n; aoks.push(sa/n); if(ne&&nl) EL.push([se/ne,sl/nl]); } }
+    if(n){ val[y*cw+x]=s/n; oks.push(s/n); aval[y*cw+x]=sa/n; aoks.push(sa/n); if(ne&&nl) EL.push([se/ne,sl/nl,y*cw+x]); } }
   if(!nin||oks.length<Math.max(3,nin*0.1)) return out;       // 縁（約8m）は計算に使っていないので、内側に少しでもあれば描く（縁は内側の値でうめる）
   const mean=oks.reduce((a,b)=>a+b,0)/oks.length, devs=oks.map(x=>Math.abs(x-mean)).sort((a,b)=>a-b);
   out.span=Math.max(TREND_MIN_SPAN,devs[Math.floor(0.95*(devs.length-1))]||0);
   for(let i=0;i<aval.length;i++) aval[i]-=ref.off; const amean=aoks.reduce((a,b)=>a+b,0)/aoks.length-ref.off; out.amean=amean;
-  pxOverlay(R,m,aval,v=>relColor(v/TREND_ABS_SPAN),amean,bandOn()?{kind:'rel',t:v=>v/TREND_ABS_SPAN}:null);
+  if(!noDraw) pxOverlay(R,m,aval,v=>relColor(v/TREND_ABS_SPAN),amean,bandOn()?{kind:'rel',t:v=>v/TREND_ABS_SPAN}:null);
   const sd=oks.map(x=>x-mean).sort((a,b)=>a-b); out.spread=sd[Math.floor(0.9*(sd.length-1))]-sd[Math.floor(0.1*(sd.length-1))];   // 田の中のばらつき（上下1割を除いた幅）
   if(EL.length>=3){ const mE=EL.reduce((a,p)=>a+p[0],0)/EL.length, mL=EL.reduce((a,p)=>a+p[1],0)/EL.length;
-    out.deep=EL.filter(([e,l])=>e-mE<=-0.03&&(l-mL)-(e-mE)>=0.04).length/EL.length; } else out.deep=0;   // 前半に出遅れて後半に大きく追いつく所
+    const isDeep=([e,l])=>e-mE<=-0.03&&(l-mL)-(e-mE)>=0.04;   // 前半に出遅れて後半に大きく追いつく所
+    out.deep=EL.filter(isDeep).length/EL.length; out.dmask=new Float32Array(cw*ch).fill(NaN); for(const q of EL) out.dmask[q[2]]=isDeep(q)?1:0; out.R=R; } else out.deep=0;
   return out;
 }
 // ---------- 生育傾向のグラフ（稲の年の 5/10〜9/30 の平均） ----------
@@ -1199,7 +1204,7 @@ function buildCurve(pid,r,h,y0){
   return {years:used,avg,cur};
 }
 // ---------- 圃場の評価（SSS〜F） ----------
-// 100点満点: 広さ30・生育のそろい15・形と大きさ15・深い所の少なさ10・例年の旺盛さ20・年ごとの安定10。獣害の起きやすさで最大20点を引く
+// 100点満点: 広さ30・生育のそろい15・形と大きさ15・ハマりにくさ10（土・乾き・地形・深い所。下の hamaOf）・例年の旺盛さ20・年ごとの安定10。獣害の起きやすさで最大20点を引く
 // 形と大きさ（cells/<id>/shape.json）: 同じ広さの 1:3 の長方形と比べた機械作業のロス（旋回・鋭角の隅の切り返しと手作業）・畦畔の長さと、
 //   機械の出し入れ（運ぶ・積み下ろし・準備）の手間。出し入れの手間は広さによらないので、作業時間に占める割合 ≒ 8% × 20a ÷ 面積（小さいほど大きい）
 //   形と大きさの点 = 15 ×（1 − (0.7×ロス/20% + 0.3×畦畔の増え/40% + 出し入れ/20%)）（0〜15）
@@ -1220,17 +1225,73 @@ function mbrOf(geom,area){   // いちばん小さい外接長方形: {fill: 面
     for(const [x,y] of P){ const u=x*c+y*s, v=-x*s+y*c; if(u<x0)x0=u; if(u>x1)x1=u; if(v<y0)y0=v; if(v>y1)y1=v; }
     const w=x1-x0, h=y1-y0; if(!best||w*h<best.a) best={a:w*h,ar:Math.max(w,h)/Math.max(1e-9,Math.min(w,h))}; }
   return {fill:area/best.a,ar:best.ar}; }
-function rankParts(pid,r,t,sh){   // t = drawTrend の結果, sh = shape.json の行 [平均行程長, ロス%, 周長%, 鋭角の隅, 一番鋭い角, 向き]
+function rankParts(pid,r,t,sh,hz){   // t = drawTrend の結果, sh = shape.json の行 [平均行程長, ロス%, 周長%, 鋭角の隅, 一番鋭い角, 向き], hz = hamaOf の結果（なければ null）
   const rows=r.m.p[pid]||{}, cr=cropsOf(pid,r), rice=Object.keys(rows).filter(y=>cr[y]==='稲'), mls=rice.map(y=>rows[y][6]).filter(v=>v!=null).map(v=>v/1000);
   const vig=mls.length?mls.reduce((a,b)=>a+b,0)/mls.length:null;
   const all=[]; for(const q in r.m.p){ const rs=r.m.p[q], cq=cropsOf(q,r), v=Object.keys(rs).filter(y=>cq[y]==='稲').map(y=>rs[y][6]).filter(v=>v!=null); if(v.length) all.push(v.reduce((a,b)=>a+b,0)/v.length/1000); }
   const pct=vig==null||!all.length?0.5:(all.filter(x=>x<vig).length+0.5*all.filter(x=>x===vig).length)/all.length;
   const sd=mls.length>=2?Math.sqrt(mls.reduce((a,b)=>a+(b-vig)**2,0)/mls.length):null, area=polyArea(parcels[pid].feature.geometry);
-  const pts={area:30*cl01(Math.log(Math.max(area,1)/500)/Math.log(20)), unif:15*cl01((0.15-t.spread)/0.13), deep:10*cl01(1-t.deep/0.4), vig:20*pct, stab:sd==null?5:10*cl01((0.08-sd)/0.06),
+  const pts={area:30*cl01(Math.log(Math.max(area,1)/500)/Math.log(20)), unif:15*cl01((0.15-t.spread)/0.13), hama:hz?10*cl01(1-(hz.H-HAMA_H0)/HAMA_SPAN):10*cl01(1-t.deep/0.4), vig:20*pct, stab:sd==null?5:10*cl01((0.08-sd)/0.06),
     shape:15*(1-cl01((sh?0.7*cl01(sh[1]/20)+0.3*cl01((sh[2]-100)/40):0.5)+SETUP_PCT*2000/Math.max(area,1)/20))};
   const sum=Object.values(pts).reduce((a,b)=>a+b,0);
-  return {area,spread:t.spread,deep:t.deep,pct,sd,sh,pts,sum,small:area<2000,base:sum,mbr:mbrOf(parcels[pid].feature.geometry,area)};
+  return {area,spread:t.spread,deep:t.deep,pct,sd,sh,hz,pts,sum,small:area<2000,base:sum,mbr:mbrOf(parcels[pid].feature.geometry,area)};
 }
+// ---------- 機械（田植機・コンバイン）のハマりやすさ: cells/<id>/wet.json・wet.png（pipeline/wet.py） ----------
+// 4つの成分（0〜1、大きいほどハマりやすい）を重みつきで平均した H（ない成分は除いて重みを割り直す）:
+//   乾き Rw 0.35 = 稲刈り後（10/10〜12/10）・春先（3/1〜4/25）の晴れた日・レーダーの日に、同じ日の周り（6km四方の耕地）と比べた湿りやすさ wi（σ単位）。
+//                 Rw = 0.35 + 0.25 ×（wi の中央値と上位1割の平均）（機械は一番悪い所でハマるので上位1割も見る）
+//   土 Rs 0.25   = 土壌図（1/5万）の軟らかさ・水はけの悪さ（泥炭土 1.0・グライ低地土 0.75・灰色低地土 0.35・褐色低地土 0.15 など、田の中の面積で平均）
+//   地形 Rt 0.25 = 0.35×低さ（周りの田より 20cm 高い→0〜60cm 低い→1 と、周り500mの田の中の低さの順位の平均。5m 標高の田だけ。10m・30m では cm の差は誤差に埋もれる）+ 0.3×谷地田（200m以内の 3m 以上高い所 50% で満点 × 森の近さ）
+//                 + 0.15×TWI + 0.2×田の中の低い所（5m レーザーの田だけ。30% で満点）
+//   深い所 Rd 0.15 = 前半に出遅れて後半に追いつく所の割合 ÷ 40%
+//   重みの合計が 0.5 未満の田は、県全体のおよその中央値 0.35 に寄せる。点 = 10 ×（1 − (H − 0.15) ÷ 0.6）（H 0.15以下で満点、0.75以上で0点）
+//   wet.json がまだない田は、これまでどおり深い所だけ（10 ×（1 − 割合÷40%））。目盛り（0.35・0.25・20cm・60cm など）は県全体のデータがそろったら合わせ直す
+const HAMA_W={w:0.35,s:0.25,t:0.25,d:0.15}, HAMA_MID=0.35, HAMA_H0=0.15, HAMA_SPAN=0.6, TWI0=8, TWIS=6;
+const DIR8=['北','北東','東','南東','南','南西','西','北西'], DEM_SRC=['5mレーザー','5m写真測量','10m','30m（衛星）'];
+const wetCache={};
+function wetLoad(cell){
+  if(!(cell in wetCache)) wetCache[cell]=fetch(`${DATA}cells/${cell}/wet.json`).then(r=>r.ok?r.json():null).then(async m=>{
+    if(!m) return null; if(!m.layers||!m.layers.length) return {m,g:null};
+    const img=new Image(); img.src=`${DATA}cells/${cell}/wet.png`; try{ await img.decode(); }catch(e){ return {m,g:null}; }   // 画像がこわれても数字（wet.json）は使う
+    const c=document.createElement('canvas'); c.width=img.width; c.height=img.height; const x=c.getContext('2d',{willReadFrequently:true}); x.drawImage(img,0,0);
+    const d=x.getImageData(0,0,c.width,c.height).data, g=new Uint8Array(c.width*c.height); for(let i=0;i<g.length;i++) g[i]=d[i*4];
+    return {m,g}; }).catch(()=>null);
+  return wetCache[cell]; }
+function hamaOf(pid,deep,wz,wd){   // wz = wetLoad の結果, wd = wild.json の行 [f30,f100,…]。この田の土・乾き・地形がどれもなければ null
+  const m=wz&&wz.m; if(!m) return null;
+  const s=m.soil&&m.soil.p&&m.soil.p[pid], t=m.terr&&m.terr.p&&m.terr.p[pid], w=m.wet&&m.wet.p&&m.wet.p[pid], C={}, X={};
+  if(s&&s[0]!=null){ C.s=s[0]/100; X.soil={code:s[1],name:(m.soil.names||{})[s[1]]||s[1],nod:s[2],share:s[3]}; }
+  X.soilWait=!(m.soil&&m.soil.p);   // 土壌図が取れなかった（あとで取り直す）
+  if(w){ X.wi=(w[0]+w[1])/200; C.w=cl01(0.35+0.25*X.wi); X.wet=w; }
+  if(t){ const [,rel,pctl,low,ldir,rng,hill,twi,src]=t, sub=[], add=(k,v,wt)=>{ if(v!=null){ sub.push([v,wt]); X[k]=v; } };
+    const rl=[rel!=null?cl01((20-rel)/80):null,pctl!=null?1-pctl/100:null].filter(v=>v!=null);
+    add('rlow',src<=1&&rl.length?rl.reduce((a,b)=>a+b,0)/rl.length:null,0.35);
+    const f=wd?(wd[0]+wd[1]):null; add('rval',cl01(hill/50)*Math.max(f==null?0.3:cl01(f/60),0.3),0.3);
+    add('rtwi',twi!=null?cl01((twi/10-TWI0)/TWIS):null,0.15); add('rin',src===0&&low!=null?cl01(low/30):null,0.2);
+    if(sub.length){ C.t=sub.reduce((a,[v,k])=>a+v*k,0)/sub.reduce((a,[,k])=>a+k,0); X.terr={rel,pctl,low,ldir,rng,hill,twi,src,f}; } }
+  if(!('s' in C)&&!('w' in C)&&!('t' in C)) return null;
+  if(deep!=null) C.d=cl01(deep/0.4);
+  let W=0,S=0; for(const k in C){ W+=HAMA_W[k]; S+=HAMA_W[k]*C[k]; }
+  const H=W>=0.5?S/W:(S+(0.5-W)*HAMA_MID)/0.5;
+  return {H,C,W,X,src:{soil:m.soil&&m.soil.src,terr:m.terr&&m.terr.src,seasons:(m.wet&&m.wet.seasons)||[]}}; }
+function soilWhy(code,name){   // 土の説明（である調の文の頭）
+  if(!code) return '';
+  if(code.startsWith('B1e4')) return '黒泥土（腐朽質泥炭土）で地盤が軟らかく、';
+  if(code[0]==='B') return '泥炭土で地盤が軟らかく、';
+  if(code.startsWith('F2e6')) return '泥炭質のグライ土で地盤が軟らかく、';
+  if(/^(F2|H1|D2)/.test(code)) return 'グライ土で水はけが悪く、';
+  return `${name}で水はけがやや悪く、`; }
+function hamaText(hz){   // 例:「グライ土で水はけが悪く、周りの田より約40cm低く、機械がハマりやすい。田の北東側に周りより低い所があり、水が溜まりやすい。」
+  const {H,C,X}=hz, S=[], why=[];
+  if(C.s!=null&&C.s>=0.6) why.push([HAMA_W.s*C.s,soilWhy(X.soil.code,X.soil.name)]);
+  if(C.w!=null&&C.w>=0.6) why.push([HAMA_W.w*C.w,'稲刈り後や春先に周りより乾きにくく、']);
+  if(X.terr){ const T=X.terr;
+    if(T.src<=1&&T.rel!=null&&T.rel<=-30) why.push([HAMA_W.t*C.t,`周りの田より約${Math.round(-T.rel/10)*10}cm低く、`]);
+    else if(X.rval!=null&&X.rval>=0.5) why.push([HAMA_W.t*C.t,'山際の谷あいの田（谷地田）で山水が入りやすく、']); }
+  const lead=why.sort((a,b)=>b[0]-a[0]).slice(0,2).map(x=>x[1]).join('');
+  if(H>=0.65) S.push(lead+'機械がハマりやすい。'); else if(H>=0.45) S.push(lead+'雨の後は機械がハマることがある。'); else if(H<=0.2) S.push('水はけが良く、機械がハマる心配は少ない。');
+  const T=X.terr; if(T&&T.src===0&&T.low!=null&&T.low>=10&&T.ldir>=0) S.push(`田の${DIR8[T.ldir]}側に周りより低い所があり、水が溜まりやすい。`);
+  return S.join(''); }
 // 獣害の起きやすさ: cells/<id>/wild.json（ESA WorldCover の森と筆ポリゴンから）
 //   [f30, f100, f200, dirs, paddy] = 田の縁から 0〜30m・30〜100m・100〜200m の森の割合（%）, 200m以内に森がある方位（16方位のビット）, 周り300mの田の割合（%）
 //   近さ = 0.6×f30 + 0.4×f100（40% で満点。森にじかに接しているかを重く見る）, 囲まれ = 森がある方位の数（4方位から、12方位で満点）,
@@ -1272,11 +1333,28 @@ function rankText(p,mt){
   const join=v[1]===0?'で、':v[1]===u[1]?(v[1]>0?'かつ、':'、かつ、'):'だが、';
   S.push(`例年の生育は${v[0]}${join}圃場内の生育のバラつき${u[0]}。`);
   if(p.sd!=null) S.push(p.sd<=0.025?'年による生育の差は小さい。':p.sd>0.05?'年による生育の差が大きい。':'');
+  if(p.hz) S.push(hamaText(p.hz));
   if(p.deep>=0.15) S.push(p.deep>=0.35?'作土の深い場所が多い。':'作土の深い場所が一部あり。');
   if(mt&&mt.ok&&mt.pen>=3){ const lv=mt.pen>=12?'が高い':mt.pen>=6?'がやや高い':'あり';
     const why=mt.f30>=20&&mt.ndir>=10?'周囲が森に囲まれており':mt.f30>=20?'山際の圃場であり':mt.f100>=20||mt.f200>=20?'近くに森があり':mt.pad<40?'周りに田が少なく':'';
     S.push(`${why?why+'、':''}獣害のリスク${lv}。`); }
   return [S.join('')]; }
+function hamaWhy(p,pc){   // ランクの札の説明の「ハマりにくさ」の行
+  const dp=`前半（6月ごろ）に出遅れて後半（8月ごろ）に大きく追いつく所（田面が深いなど）が田の ${pc(p.deep)}`;
+  if(!p.hz) return `${dp}。土・乾き・地形のデータは準備中のため、深い所だけで 10 ×（1 − 割合÷40%）`;
+  const {H,C,X,W}=p.hz, f2=v=>v.toFixed(2), L=[];
+  L.push(X.soil?`土 ${C.s!=null?f2(C.s):'—'}：${X.soil.name}（${X.soil.code}${X.soil.share<90?`・田の${X.soil.share}%`:''}${X.soil.nod>=30?`・${X.soil.nod}%は土壌図なし`:''}。土壌図 1/5万）`:X.soilWait?'土 —：土壌図は準備中':'土 —：この田は土壌図の範囲外');
+  if(X.wet){ const w=X.wet; L.push(`乾きにくさ ${f2(C.w)}：稲刈り後・春先の、同じ日の周り（6km四方の耕地）と比べた湿りやすさ 中央 ${(w[0]/100).toFixed(1)}・上位1割 ${(w[1]/100).toFixed(1)}（周りのふつうを0とした目盛り）`
+    +`${w[5]!=null?`、水が見えた観測 ${w[5]}%`:''}（${p.hz.src.seasons.length}時期・${w[6]}観測）。0.35 + 0.25 × 平均`); }
+  else L.push('乾きにくさ —：衛星のデータは準備中');
+  if(X.terr){ const T=X.terr, bits=[];
+    if(T.src<=1&&T.rel!=null) bits.push(`周りの田より ${T.rel>0?'+':''}${T.rel}cm`); if(T.src<=1&&T.pctl!=null) bits.push(`周り500mの田の中で低い方から ${T.pctl}%`);
+    if(T.hill) bits.push(`200m以内で3m以上高い所 ${T.hill}%${X.rval>=0.5?'（谷地田）':''}`); if(T.src===0&&T.low!=null) bits.push(`田の中の低い所 ${T.low}%・凹凸 ${T.rng}cm`);
+    L.push(`地形 ${C.t!=null?f2(C.t):'—'}：${bits.length?bits.join('、'):'この標高では田どうしの細かい高さの差は分からない'}（標高 ${DEM_SRC[T.src]}${T.src>=2?'。周りとの高さの差は5mの標高があるときだけ使う':''}）`); }
+  else L.push('地形 —：標高のデータは準備中');
+  L.push(`深い所 ${C.d!=null?f2(C.d):'—'}：${dp}（割合÷40%）`);
+  return L.join('<br>')+`<br>H =（0.35×乾きにくさ + 0.25×土 + 0.25×地形 + 0.15×深い所）÷ 使った重み${W<0.5?'（重みが0.5未満なので中央値0.35に寄せる）':''} = ${f2(H)}。`
+    +`10 ×（1 − (H − 0.15) ÷ 0.6）：H 0.15以下で満点、0.75以上で0点`; }
 let rkTipFor=null, rkPinned=false;
 function rankTip(b,x,pin){   // ランクの札の説明（点数の内わけと、それぞれの計算のしかた）。pin = 押して出した（ほかを押すまで出しておく）
   let el=document.getElementById('rkTip'); if(!el){ el=document.createElement('div'); el.id='rkTip'; el.className='rktip'; document.body.appendChild(el);
@@ -1293,13 +1371,13 @@ function rankTip(b,x,pin){   // ランクの札の説明（点数の内わけと
   ${row('形と大きさ',P.shape,15,(sh?`同じ広さの 1:3 の長方形より機械作業が ${Math.max(0,sh[1])}% 多く、畦畔は ${(sh[2]/100).toFixed(2)}倍（1行程 平均${sh[0]}m${sh[3]?`・鋭角の隅${sh[3]}か所`:''}）。`:'形のデータがまだないので、形の分は半分とします。')
     +`機械の出し入れ（運ぶ・積み下ろし・準備）の手間は広さによらないので、${Math.round(p.area/100)}a では作業時間の約${(SETUP_PCT*2000/Math.max(p.area,1)).toFixed(1)}%（${SETUP_PCT}% × 20a ÷ 面積。小さいほど大きい）。`
     +`15 ×（1 − 0.7×作業の増え÷20% − 0.3×畦畔の増え÷40% − 出し入れ÷20%）`)}
-  ${row('深い所の少なさ',P.deep,10,`前半（6月ごろ）に出遅れて後半（8月ごろ）に大きく追いつく所（田面が深いなど）が田の ${pc(p.deep)}。10 ×（1 − 割合÷40%）`)}
+  ${row('ハマりにくさ',P.hama,10,hamaWhy(p,pc))}
   ${row('例年の旺盛さ',P.vig,20,`稲の年の8月ごろの NDVI の平均が、同じ地区（約2km四方）の稲の田の中で上位 ${Math.max(1,Math.round((1-p.pct)*100))}%。20 ×（1 − 上位の割合）`)}
   ${row('年ごとの安定',P.stab,10,p.sd==null?'稲の年が1回だけなので半分（5点）':`8月ごろの NDVI の年ごとのばらつき（標準偏差）が ${p.sd.toFixed(3)}。10 ×（0.08 − ばらつき）÷ 0.06：0.02以下で満点、0.08以上で0点`)}
   ${mt&&mt.ok?`<tr><td>獣害</td><td class="num"><b>−${pen}</b> / 20</td><td class="why">田の縁から 30m以内の森 ${mt.f30}%・30〜100m ${mt.f100}%、森がある方位 ${mt.ndir}/16、周り300mの田 ${mt.pad}%。
     近さ ${mt.near.toFixed(2)} =（0.6×30m以内 + 0.4×30〜100m）÷ 40%、囲まれ ${mt.encl.toFixed(2)} =（方位数 − 3）÷ 9、孤立 ${mt.iso.toFixed(2)} =（40% − 周りの田）÷ 35%（どれも 0〜1）。
     減点 = 20 ×（0.6×近さ + 0.25×囲まれ + 0.15×孤立）（森は ESA WorldCover 2021、10m）</td></tr>`:`<tr><td>獣害</td><td class="num">−0</td><td class="why">手がかりの準備中のため減点なし</td></tr>`}
-  </table><div class="why">ランクの区切り：${cut}（県全体の稲の田で ${share}）。NDVI は Sentinel-2 と Landsat、形は筆ポリゴン（農林水産省）から。</div>`;
+  </table><div class="why">ランクの区切り：${cut}（県全体の稲の田で ${share}）。NDVI は Sentinel-2 と Landsat、形は筆ポリゴン（農林水産省）から。${p.hz?'ハマりにくさの土は農研機構 日本土壌インベントリー（CC BY 4.0）、標高は国土地理院 標高タイル、乾きは Sentinel-1/2 と ERA5-Land から。':''}</div>`;
   el.style.fontSize=Math.max(12,0.85*parseFloat(getComputedStyle(b.closest('.rankbox')).fontSize))+'px';
   el.style.maxHeight=''; el.style.display='block'; const r=b.getBoundingClientRect(), w=el.offsetWidth; let h=el.offsetHeight, left, top;
   if(r.right+8+w<=innerWidth-8||r.left-8-w>=8){   // 横に置ける
@@ -1312,11 +1390,11 @@ function rankTip(b,x,pin){   // ランクの札の説明（点数の内わけと
 }
 async function renderRanks(gen,items){   // items: [{pid,color,r,t}]
   const box=document.getElementById('rankBox'); box.style.display=items.length&&SHOW_RANK?'block':'none'; if(!items.length||!SHOW_RANK){ box.innerHTML=''; return; }
-  const shs=await Promise.all(items.map(it=>shapeLoad(parcels[it.pid].cell))); if(gen!==pxGen) return;
-  const rows=items.map((it,i)=>({...it,p:rankParts(it.pid,it.r,it.t,shs[i]&&shs[i].p&&shs[i].p[it.pid])}));
+  const [shs,wzs,wls]=await Promise.all([shapeLoad,wetLoad,wildLoad].map(f=>Promise.all(items.map(it=>f(parcels[it.pid].cell))))); if(gen!==pxGen) return;
+  const rows=items.map((it,i)=>({...it,p:rankParts(it.pid,it.r,it.t,shs[i]&&shs[i].p&&shs[i].p[it.pid],hamaOf(it.pid,it.t.deep,wzs[i],wls[i]&&wls[i].p&&wls[i].p[it.pid]))}));
   const draw=()=>{ box.innerHTML='<h2 style="margin:0 0 2px">圃場の評価</h2>'+rows.map((x,i)=>{ const sc=Math.round(x.p.base-(x.mt&&x.mt.pen||0)), rk=RANK_CUT.find(c=>sc>=c[0])[1];
     return `<div class="rk"><div class="bd rk-${rk}" data-i="${i}" tabindex="0" aria-label="ランク${rk}（くわしい点数）"><small>Rank</small><span>${rk}</span>${rk==='SSS'?'<i>✦</i><i>✦</i><i>✧</i><i>✦</i>':''}</div><div class="tx"><b style="color:${x.color}">${selLabel(x.pid)}</b>　<b>${sc}点</b><br>${rankText(x.p,x.mt).join('<br>')}${x.mt&&!x.mt.ok?'<br><span class="hint">（獣害の手がかりは準備中のため、減点していません）</span>':''}</div></div>`; }).join('')
-    +'<div class="hint">広さ30・生育のそろい15・形と大きさ15（小さい田ほど機械の出し入れの手間で低い）・深い所の少なさ10・例年の旺盛さ20・年ごとの安定10（100点）。獣害の起きやすさ（森との近さ・森に囲まれ具合・周りの田の少なさ）で最大20点を引きます。ランクの札にマウスを重ねる（スマホは押す）と、点数のわけが出ます。</div>';
+    +'<div class="hint">広さ30・生育のそろい15・形と大きさ15（小さい田ほど機械の出し入れの手間で低い）・ハマりにくさ10（土壌図・稲刈り後や春先の乾き・周りとの高さ・深い所）・例年の旺盛さ20・年ごとの安定10（100点）。獣害の起きやすさ（森との近さ・森に囲まれ具合・周りの田の少なさ）で最大20点を引きます。ランクの札にマウスを重ねる（スマホは押す）と、点数のわけが出ます。</div>';
     // マウスは重ねると出る（押すと出したままにする）。スマホは押すと出て、ほかを押すと消える
     box.querySelectorAll('.bd').forEach(b=>{ const x=rows[+b.dataset.i];
       b.onpointerenter=e=>{ if(e.pointerType==='mouse'&&rkTipFor!==b) rankTip(b,x,false); };
@@ -1342,15 +1420,44 @@ async function renderTrend(gen,mode,note,lbl){
   if(wait) msg.push(`まだ準備中 ${wait}枚（順に作っています）`);
   note.textContent=msg.join(' / ');
 }
+// ハマりやすさマップ: 田ごとの H に、田の中のまだら l を足して塗る。値 = H + 0.5 ×（l − 田の中の l の平均）
+//   l − 平均 = Σ 重み ×（層の値 − 田の中の層の平均）、層: 0.5 × 低さ（傾きを除いたその田の中央値より 30cm 低いと 1。5mレーザーの田だけ）+ 0.35 × 乾き（画素の wi を Rw と同じ式で）+ 0.15 × 深い所の印（生育傾向）
+//   重みは固定（ない層・ない画素は田の平均とみなす）。目盛りは固定（0〜0.85）なので、ほかの田と同じ色なら同じハマりやすさ
+function drawWet(pid,wz,hz,t){
+  const m=wz.m, g=wz.g, R=pxRegion(pid,m); if(!R) return false; const {c0,r0,cw,ch,inside}=R;
+  const li=k=>g&&m.layers?m.layers.indexOf(k):-1, dm=t&&t.dmask&&t.R&&t.R.c0===c0&&t.R.r0===r0&&t.R.cw===cw&&t.R.ch===ch?t.dmask:null;
+  const lay=[], add=(a,wt)=>{ let s=0,n=0; for(let i=0;i<a.length;i++) if(!isNaN(a[i])){ s+=a[i]; n++; } if(n) lay.push([a,s/n,wt]); };
+  const grab=(k,f,wt)=>{ if(k<0) return; const a=new Float32Array(cw*ch).fill(NaN);
+    for(let y=0;y<ch;y++) for(let x=0;x<cw;x++){ if(!inside(c0+x+.5,r0+y+.5)) continue; const v=g[(k*m.h+r0+y)*m.w+c0+x]; if(v>0) a[y*cw+x]=f(v); }
+    add(a,wt); };
+  grab(li('dz'),v=>cl01(-(v-128)*0.02/0.3),0.5); grab(li('wi'),v=>cl01(0.35+0.25*((v-1)/254*6-3)),0.35); if(dm) add(dm,0.15);
+  const val=new Float32Array(cw*ch).fill(NaN);   // 重みは固定（割り直さない）。ない画素は田の平均とみなす（層の少ない田に偽のまだらを出さない）
+  for(let y=0;y<ch;y++) for(let x=0;x<cw;x++){ if(!inside(c0+x+.5,r0+y+.5)) continue; const i=y*cw+x; let d=0;
+    for(const [a,mu,wt] of lay) if(!isNaN(a[i])) d+=wt*(a[i]-mu);
+    val[i]=hz.H+0.5*d; }
+  pxOverlay(R,m,val,v=>wetColor(v),hz.H,bandOn()?{kind:'wet',t:v=>v}:null);
+  return true; }
+async function renderWet(gen,note){
+  const ranked=[]; let drawn=0, none=0, wait=0; note.textContent='読み込み中…';
+  for(const s of selected){ const P=parcels[s.pid]; if(!P||!P.cell){ wait++; continue; }
+    const [r,wz,wl]=await Promise.all([trLoad(P.cell),wetLoad(P.cell),wildLoad(P.cell)]); if(gen!==pxGen) return;
+    const t=r?drawTrend(s.pid,r,true):null; if(t&&t.span) ranked.push({pid:s.pid,color:s.color,r,t});
+    const hz=hamaOf(s.pid,t&&t.span?t.deep:null,wz,wl&&wl.p&&wl.p[s.pid]);
+    if(hz&&drawWet(s.pid,wz,hz,t)){ drawn++; P.layer.setStyle({fillOpacity:0}); P.layer._stk=''; } else none++; }
+  renderRanks(gen,ranked);
+  note.textContent=[none?`まだデータがない田 ${none}枚（土壌図・標高・衛星の乾きを順に作っています）`:'',wait?`まだ準備中 ${wait}枚`:''].filter(Boolean).join(' / ');
+}
 async function renderPx(){
   const gen=++pxGen, mode=fillMode(), on=document.getElementById('colorOn').checked, note=document.getElementById('pxNote');
   const bar=document.getElementById('lgBar'), lbl=document.getElementById('lgLbl');
-  bar.classList.toggle('rel',mode==='rel'||isTrend(mode));
-  bar.style.background=bandOn()&&selected.length&&document.getElementById('colorOn').checked?bandBar(mode==='abs'?'abs':'rel'):'';
-  lbl.innerHTML=mode==='rel'?'<span>その田の平均より低い</span><span>田の中の差</span><span>高い</span>':isTrend(mode)?'<span>生育弱傾向</span><span>地区の平均（稲の年）</span><span>生育良傾向</span>':'<span>低い 0.2</span><span>NDVI</span><span>0.9 高い</span>';
+  bar.classList.toggle('rel',mode==='rel'||mode==='trend');
+  bar.style.background=mode==='wet'?(bandOn()?bandBar('wet'):`linear-gradient(90deg,${WET_STOPS.map(c=>`rgb(${c.join(',')})`).join(',')})`)
+    :bandOn()&&selected.length&&document.getElementById('colorOn').checked?bandBar(mode==='abs'?'abs':'rel'):'';
+  lbl.innerHTML=mode==='wet'?'<span>乾きやすい</span><span>ハマりやすさ</span><span>ハマりやすい</span>':mode==='rel'?'<span>その田の平均より低い</span><span>田の中の差</span><span>高い</span>':isTrend(mode)?'<span>生育弱傾向</span><span>地区の平均（稲の年）</span><span>生育良傾向</span>':'<span>低い 0.2</span><span>NDVI</span><span>0.9 高い</span>';
   pxLayer.clearLayers(); if(!isTrend(mode)||!selected.length||!on){ const b=document.getElementById('rankBox'); b.style.display='none'; b.innerHTML=''; }
   if(!on){ note.textContent=''; return; }
-  if(!selected.length){ note.textContent=isTrend(mode)?'田んぼを選ぶと、その中の生育の傾向（稲の年だけを重ねたもの）を色分けします':'田んぼを選ぶと、その中を10m画素で色分けします'; return; }
+  if(!selected.length){ note.textContent=mode==='wet'?'田んぼを選ぶと、機械のハマりやすさ（土壌図・稲刈り後や春先の乾き・周りとの高さ・深い所）を色分けします':isTrend(mode)?'田んぼを選ぶと、その中の生育の傾向（稲の年だけを重ねたもの）を色分けします':'田んぼを選ぶと、その中を10m画素で色分けします'; return; }
+  if(mode==='wet') return renderWet(gen,note);
   if(isTrend(mode)) return renderTrend(gen,mode,note,lbl);
   const d=document.getElementById('colorDate').value; let ok=0,miss=0,cloud=0; const spans=[]; note.textContent='読み込み中…';
   for(const s of selected){ const P=parcels[s.pid]; if(!P||!P.cell){ miss++; continue; }
@@ -1493,7 +1600,7 @@ async function boot(){
   const md=x=>x?`${+x.slice(5,7)}/${+x.slice(8,10)}`:'', LT=index.latest||{}, chk=index.checked||index.updated||'';
   document.getElementById('meta').textContent=`${index.n_parcels?.toLocaleString()||''}区画`+(LT.s2?` / 最新の撮影 Sentinel-2 ${md(LT.s2)}${LT.ls?'・Landsat '+md(LT.ls):''}`:'')+` / 更新 ${jst(index.updated)}${index.checked?'・確認 '+jst(index.checked):''}`;
   if(chk) provFrom=new Date(Date.parse(chk.slice(0,10)+'T00:00:00Z')-5*864e5).toISOString().slice(0,10);   // 最後の確認から5日以内の観測は速報
-  document.getElementById('foot').textContent='データ: '+(index.source||'Sentinel-2')+'。Contains modified Copernicus Sentinel data。地図: 国土地理院。区画: 農林水産省 筆ポリゴン。NDVIは10m画素の区画平均で、0.8〜0.9で頭打ちになります。雲の影響を完全には除けないので、判断は現地の観察と合わせてください。';
+  document.getElementById('foot').textContent='データ: '+(index.source||'Sentinel-2')+'。Contains modified Copernicus Sentinel data。地図: 国土地理院。区画: 農林水産省 筆ポリゴン。土壌: 農研機構 日本土壌インベントリー（CC BY 4.0）。標高: 国土地理院 標高タイルを加工。NDVIは10m画素の区画平均で、0.8〜0.9で頭打ちになります。雲の影響を完全には除けないので、判断は現地の観察と合わせてください。';
   const h=parseHash();
   if(h.c) map.setView(h.c,h.z||15); else if(index.bbox) map.fitBounds([[index.bbox[1],index.bbox[0]],[index.bbox[3],index.bbox[2]]]);
   map.on('moveend zoomend',()=>{ loadVisible(); writeHash(); });
