@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>田んぼNDVIマップ</title>
+<title>圃場NDVIマップ</title>
 <style>/* required styles */
 
 .leaflet-pane,
@@ -770,7 +770,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
 </head>
 <body>
 <header>
-  <h1>田んぼNDVIマップ</h1>
+  <h1>圃場NDVIマップ</h1>
   <span class="meta" id="meta"></span>
   <span class="spacer"></span>
   <button class="btn" id="btnGeo">現在地へ</button>
@@ -789,10 +789,10 @@ svg.leaflet-image-layer.leaflet-interactive path {
   </div>
   <div class="splitter" id="splitter" title="ドラッグで地図とグラフの幅を変えられます（ダブルクリックで元に戻す）"></div>
   <aside class="side">
-    <h2>選んだ田んぼ <span class="hint">（地図をタップ・最大20枚）</span></h2>
+    <h2>選んだ圃場 <span class="hint">（地図をタップ・最大20枚）</span></h2>
     <div class="chips" id="chips"></div>
     <div class="ctl">
-      <button class="btn small" id="btnClear">すべて解除</button> <button class="btn small" id="btnXlsx" title="選んだ田んぼの一覧（点数・作物・NDVI）と、番号つきの地図を Excel に保存">Excelで保存</button>
+      <button class="btn small" id="btnClear">すべて解除</button> <button class="btn small" id="btnXlsx" title="選んだ圃場の一覧（点数・作物・NDVI）と、番号つきの地図を Excel に保存">Excelで保存</button>
       <label style="display:none"><input type="checkbox" id="nbOn">近隣の田の平均も表示</label>
     </div>
     <div class="rankbox" id="rankBox"></div>
@@ -833,7 +833,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
 // 1枚目から順に 青・赤・緑・オレンジ・紫、そのあと 水色・茶・ピンク・黄土・灰・黄緑・紺・青緑・えんじ・オリーブ・空色・サーモン・深緑・薄紫・青紫
 const PALETTE=['#1a73e8','#d93025','#188038','#f57c00','#9334e6','#12b5cb','#795548','#e52592','#c9a100','#757575',
   '#7cb342','#1a237e','#00897b','#880e4f','#827717','#64b5f6','#ff8a65','#1b5e20','#ba68c8','#5c6bc0'];
-const MAX_SEL=PALETTE.length;   // 選べる田んぼの数（20枚）
+const MAX_SEL=PALETTE.length;   // 選べる圃場の数（20枚）
 let pkg=null;          // {meta, parcels(GeoJSON), series:{pid:[[date,ndvi,valid],...]}}
 let parcels={};        // pid -> {feature, layer, centroid:[lon,lat], name}
 let selected=[];       // [{pid,color}]
@@ -974,7 +974,7 @@ function buildColorDates(){
   const n=Object.keys(parcels).length, cnt={};
   for(const p in parcels) for(const d of cleanOf(p).by.keys()) cnt[d]=(cnt[d]||0)+1;
   const cov=allDates.map(d=>({d,c:cnt[d]||0})).filter(x=>x.c>0);
-  // 読み込んでいる田んぼの半分以上に値がある日だけ並べる（ほとんど雲の日は出さない）。そういう日が1つもなければ全部
+  // 読み込んでいる圃場の半分以上に値がある日だけ並べる（ほとんど雲の日は出さない）。そういう日が1つもなければ全部
   const good=cov.filter(x=>x.c/n>=0.5), list=good.length?good:cov;
   for(const x of list.slice().reverse()){ const o=document.createElement('option'); o.value=x.d; o.textContent=x.d; sel.appendChild(o); }
   sel.value=list.length?list[list.length-1].d:'';
@@ -1428,7 +1428,7 @@ async function renderPx(){
   lbl.innerHTML=mode==='rel'?'<span>その田の平均より低い</span><span>田の中の差</span><span>高い</span>':isTrend(mode)?'<span>生育弱傾向</span><span>地区の平均（稲の年）</span><span>生育良傾向</span>':'<span>低い 0.2</span><span>NDVI</span><span>0.9 高い</span>';
   pxLayer.clearLayers(); if(!isTrend(mode)||!selected.length||!on){ const b=document.getElementById('rankBox'); b.style.display='none'; b.innerHTML=''; }
   if(!on){ note.textContent=''; return; }
-  if(!selected.length){ note.textContent='田んぼを選ぶと、その中を色分けします'; return; }
+  if(!selected.length){ note.textContent='圃場を選ぶと、その中を色分けします'; return; }
   if(isTrend(mode)) return renderTrend(gen,mode,note,lbl);
   const d=document.getElementById('colorDate').value; let ok=0,miss=0,cloud=0; const spans=[]; note.textContent='読み込み中…';
   for(const s of selected){ const P=parcels[s.pid]; if(!P||!P.cell){ miss++; continue; }
@@ -1439,7 +1439,7 @@ async function renderPx(){
     lbl.innerHTML=`<span>平均より低い −${a===b?a:a+'〜'+b}%</span><span>${spans.length>1?'田ごとに自動':'この田の中の差'}</span><span>+${a===b?a:a+'〜'+b}% 高い</span>`; }
   note.textContent=''+(miss?`この日の画素なし ${miss}枚（5/10〜9/30の晴れた日だけ）`:'')+(cloud?`${miss?' / ':''}雲で見えない ${cloud}枚`:'');
 }
-async function buildPxDates(){   // 圃場内モードでは、選んだ田んぼの画素がある日だけを並べる
+async function buildPxDates(){   // 圃場内モードでは、選んだ圃場の画素がある日だけを並べる
   const sel=document.getElementById('colorDate'), keep=sel.value;
   document.getElementById('dateCtl').style.display=isTrend(fillMode())?'none':'inline-flex';
   if(isTrend(fillMode())){ paintMap(); return; }
@@ -1467,10 +1467,10 @@ const fmtD=d=>`${+d.slice(5,7)}/${+d.slice(8,10)}`;
 function drawChart(){
   const svg=document.getElementById('chart'); const mode=document.getElementById('mode').value;
   const now=allDates.length?Date.parse(allDates[allDates.length-1]+'T00:00:00Z'):Date.now();
-  if(!selected.length) setStatus('田んぼを選ぶとグラフが出ます。'); else setStatus('');
+  if(!selected.length) setStatus('圃場を選ぶとグラフが出ます。'); else setStatus('');
   let xmin,xmax; const series=[]; const tmode=isTrend(fillMode());
   document.getElementById('modeCtl').style.display=tmode?'none':''; document.getElementById('trendHint').style.display=tmode?'':'none';
-  if(tmode) setStatus(selected.length?'':'田んぼを選ぶとグラフが出ます。');
+  if(tmode) setStatus(selected.length?'':'圃場を選ぶとグラフが出ます。');
   const src=tmode?[]:selected.map(s=>({label:selLabel(s.pid),color:s.color,dash:'',pts:seriesOf(s.pid)}));
   if(document.getElementById('nbOn').checked&&selected.length){ const nb=neighborSeries(); if(nb.n) src.push({label:`近隣の田の平均（${nb.n}枚）`,color:'#8a8f8c',dash:'6 4',pts:nb.pts}); }
   // 期間は 5/10〜9/30（今年＝最新の観測がある年）。前年と重ねるときは各年の 5/10 からの日数で並べる
@@ -1524,7 +1524,7 @@ let lastPick=null;
 function renderSummary(){
   const t=document.getElementById('sum'); if(!selected.length){t.innerHTML='';return;}
   const nb=document.getElementById('nbOn').checked?neighborSeries():null;
-  t.innerHTML='<tr><th>田んぼ</th><th class="num">直近</th><th>日付</th><th class="num">今年の最大</th><th>日付</th>'+(nb&&nb.n?'<th class="num">近隣との差(直近)</th>':'')+'</tr>'+selected.map(s=>{
+  t.innerHTML='<tr><th>圃場</th><th class="num">直近</th><th>日付</th><th class="num">今年の最大</th><th>日付</th>'+(nb&&nb.n?'<th class="num">近隣との差(直近)</th>':'')+'</tr>'+selected.map(s=>{
     const ser=seriesOf(s.pid).filter(p=>!p.rad); const last=ser[ser.length-1]; const y=allDates.length?allDates[allDates.length-1].slice(0,4):''; const yr=ser.filter(p=>p.date.startsWith(y)); const mx=yr.length?yr.reduce((a,b)=>b.ndvi>a.ndvi?b:a):null;
     let nbd=''; if(nb&&nb.n&&last){ const q=nb.pts.find(p=>p.date===last.date); nbd=q?`<td class="num" style="color:${last.ndvi-q.ndvi>=0?'var(--accent)':'var(--warn)'}">${(last.ndvi-q.ndvi>=0?'+':'')+(last.ndvi-q.ndvi).toFixed(2)}</td>`:'<td class="num">—</td>'; }
     return `<tr><td><i style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${s.color};margin-right:6px"></i><span style="color:${s.color};font-weight:700">${selLabel(s.pid)}</span></td><td class="num">${last?last.ndvi.toFixed(2):'—'}</td><td>${last?fmtD(last.date):''}</td><td class="num">${mx?mx.ndvi.toFixed(2):'—'}</td><td>${mx?fmtD(mx.date):''}</td>${nbd}</tr>`; }).join('');
@@ -1595,17 +1595,17 @@ async function exportRows(){   // 田ごとの行（点数は生育傾向マッ�
   return {rows:out,years:[...years].sort()};
 }
 document.getElementById('btnXlsx').onclick=async()=>{
-  if(!selected.length){ setStatus('田んぼを選んでから押してください。'); return; }
+  if(!selected.length){ setStatus('圃場を選んでから押してください。'); return; }
   const btn=document.getElementById('btnXlsx'); btn.disabled=true; setStatus('Excel を作っています…');
   try{
     const [EJ,map_,data]=await Promise.all([loadExcelJs(),exportMap(),exportRows()]);
     const wb=new EJ.Workbook(), ws=wb.addWorksheet('一覧'), today=new Date(), ds=`${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
-    ws.getCell('A1').value=`田んぼNDVIマップ　選んだ田んぼの一覧（${ds}）`; ws.getCell('A1').font={bold:true,size:14};
+    ws.getCell('A1').value=`圃場NDVIマップ　選んだ圃場の一覧（${ds}）`; ws.getCell('A1').font={bold:true,size:14};
     ws.getCell('A2').value='地図の番号と、下の表の「番号」が同じ田です。'; ws.getCell('A2').font={color:{argb:'FF555555'}};
     let row=4;
     if(map_){ const w=Math.min(760,map_.W), h=Math.round(map_.H*w/map_.W), id=wb.addImage({base64:map_.url,extension:'png'});
       ws.addImage(id,{tl:{col:0,row:3},ext:{width:w,height:h}}); row=4+Math.ceil(h/20)+1; }
-    const R=data.rows.some(o=>o.rank), cols=[['番号',6],['田んぼ',15],['面積(a)',9],
+    const R=data.rows.some(o=>o.rank), cols=[['番号',6],['圃場',15],['面積(a)',9],
       ...(R?[['ランク',7],['点数',7],['広さ/30',8],['生育のそろい/15',10],['形と大きさ/15',10],['深いところの少なさ/10',12],['例年の旺盛さ/20',10],['年ごとの安定/10',10],['獣害(減点)/20',10],['説明',60]]:[]),
       ['直近のNDVI',10],['直近の日付',11],['今年の最大NDVI',11],['最大の日付',11],...data.years.map(yy=>[`${yy}年の作物`,10]),['緯度',11],['経度',11],['地図で開く',12],['区画ID',38]];
     ws.getRow(row).values=cols.map(c=>c[0]); ws.getRow(row).font={bold:true}; ws.getRow(row).alignment={wrapText:true,vertical:'middle'};
