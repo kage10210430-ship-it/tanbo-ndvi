@@ -546,6 +546,12 @@ def wet_part(sat, parcels, cell, g, seasons, prev, log, today, sum_path, deadlin
     from trend import labels
     prev = prev or {}; fail = {k: _fail(v) for k, v in (prev.get("fail") or {}).items()}
     have = list(prev.get("seasons") or [])
+    if not have and os.path.exists(sum_path):             # wet.json が公開されなかった（公開の失敗など）ときは、合計に書いた時期の一覧を使う
+        try:
+            with np.load(sum_path) as z:
+                have = sorted(str(x) for x in z["seasons"])
+        except Exception:
+            have = []
     tot = load_sums(sum_path, (g["h"], g["w"]), have) if have else {}
     if have and not tot:
         log(f"{cell['id']}: 乾き 前回の合計（wet_sum.npz）がないので、はじめから作り直します"); have = []
