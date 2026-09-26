@@ -60,6 +60,14 @@ jobs:
           elif git ls-remote --exit-code --heads origin gh-pages >/dev/null; then
             echo "::error::公開中のデータ（gh-pages）を取り出せませんでした。空のデータで上書きしないよう中止します"; exit 1; fi
 
+      # 機械のハマりやすさ（pipeline/wet.py）の衛星の乾きの合計。公開サイトの容量（1GB）を使わないよう、別のブランチ wet-state に置く
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.run == '1'
+        with:
+          ref: wet-state
+          path: state
+        continue-on-error: true
+
       - uses: actions/setup-python@v5
         if: steps.gate.outputs.run == '1'
         with:
@@ -108,6 +116,19 @@ jobs:
         continue-on-error: true
         timeout-minutes: 30
         run: python pipeline/crop.py --data site/data --out site/data --prev site/data --no-full --workers 4
+
+      - name: 乾きの合計を wet-state ブランチに保存する
+        if: steps.gate.outputs.run == '1' && !cancelled()
+        continue-on-error: true
+        run: |
+          [ -d state/wet ] && [ -n "$(ls -A state/wet 2>/dev/null)" ] || { echo "保存するものがありません"; exit 0; }
+          cd state
+          [ -d .git ] || { git init -q && git checkout -q -b wet-state; }
+          url="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+          git remote set-url origin "$url" 2>/dev/null || git remote add origin "$url"
+          git config --unset-all http.https://github.com/.extraheader || true
+          git config user.name github-actions && git config user.email github-actions@users.noreply.github.com
+          git add -A wet && { git diff --cached --quiet && echo "変わりなし" || { git commit -qm "wet sums" && git push -q origin HEAD:wet-state; }; }
 
       - uses: peaceiris/actions-gh-pages@v4
         if: steps.gate.outputs.run == '1' && (steps.crop.outcome == 'success' || (steps.trend.outputs.made != '' && steps.trend.outputs.made != '0'))
