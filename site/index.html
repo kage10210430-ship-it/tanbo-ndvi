@@ -789,7 +789,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
     <h2>選んだ田んぼ <span class="hint">（地図をタップ・最大20枚）</span></h2>
     <div class="chips" id="chips"></div>
     <div class="ctl">
-      <button class="btn small" id="btnClear">すべて解除</button>
+      <button class="btn small" id="btnClear">すべて解除</button> <button class="btn small" id="btnXlsx" title="選んだ田んぼの一覧（点数・作物・NDVI）と、番号つきの地図を Excel に保存">Excelで保存</button>
       <label style="display:none"><input type="checkbox" id="nbOn">近隣の田の平均も表示</label>
     </div>
     <div class="rankbox" id="rankBox"></div>
@@ -1143,7 +1143,7 @@ function cropInfo(pid,r){   // {年: {c: 作物, p: 稲の確からしさ%, prov
 function cropsOf(pid,r){   // {年: 作物}
   const rows=(r&&r.m.p[pid])||{}, ci=cropInfo(pid,r), sm=seasonMins(pid,r), out={};
   for(const y in rows) out[y]=y in ci?ci[y].c:cropOf(rows[y],sm.sp[y],sm.au[y]); return out; }
-function drawTrend(pid,r){   // 戻り値 {years: 重ねた稲の年, rice: 稲と見分けた年（画素がない年も）, mugi, other, known: 手がかりがある年の数, span: 目盛り（0なら描けなかった）}
+function drawTrend(pid,r,noDraw){   // noDraw = 色を塗らずに計算だけ（Excel の書き出し用）。戻り値 {years: 重ねた稲の年, rice: 稲と見分けた年（画素がない年も）, mugi, other, known: 手がかりがある年の数, span: 目盛り（0なら描けなかった）}
   const {m,g}=r, rows=m.p[pid]||{}, ys=Object.keys(rows).sort(), cr=cropsOf(pid,r), rice=ys.filter(y=>cr[y]==='稲');
   const ref=trendRef(r), lay=(y,w)=>{ if(!(rows[y][w==='e'?3:5]>0&&m.layers.includes(y+w))) return null; const b=Math.max(0.05,rows[y][w==='e'?4:6]/1000); return {k:m.layers.indexOf(y+w),b,ref:ref[y+w]||b}; };
   const yrs=rice.map(y=>[y,lay(y,'e'),lay(y,'l')]).filter(([,e,l])=>e||l);
@@ -1162,7 +1162,7 @@ function drawTrend(pid,r){   // 戻り値 {years: 重ねた稲の年, rice: 稲�
   const mean=oks.reduce((a,b)=>a+b,0)/oks.length, devs=oks.map(x=>Math.abs(x-mean)).sort((a,b)=>a-b);
   out.span=Math.max(TREND_MIN_SPAN,devs[Math.floor(0.95*(devs.length-1))]||0);
   for(let i=0;i<aval.length;i++) aval[i]-=ref.off; const amean=aoks.reduce((a,b)=>a+b,0)/aoks.length-ref.off; out.amean=amean;
-  pxOverlay(R,m,aval,v=>relColor(v/TREND_ABS_SPAN),amean,bandOn()?{kind:'rel',t:v=>v/TREND_ABS_SPAN}:null);
+  if(!noDraw) pxOverlay(R,m,aval,v=>relColor(v/TREND_ABS_SPAN),amean,bandOn()?{kind:'rel',t:v=>v/TREND_ABS_SPAN}:null);
   const sd=oks.map(x=>x-mean).sort((a,b)=>a-b); out.spread=sd[Math.floor(0.9*(sd.length-1))]-sd[Math.floor(0.1*(sd.length-1))];   // 田の中のばらつき（上下1割を除いた幅）
   if(EL.length>=3){ const mE=EL.reduce((a,p)=>a+p[0],0)/EL.length, mL=EL.reduce((a,p)=>a+p[1],0)/EL.length;
     const isDeep=([e,l])=>e-mE<=-0.03&&(l-mL)-(e-mE)>=0.04;   // 前半に出遅れて後半に大きく追いつく所
@@ -1530,6 +1530,111 @@ function renderSummary(){
     let nbd=''; if(nb&&nb.n&&last){ const q=nb.pts.find(p=>p.date===last.date); nbd=q?`<td class="num" style="color:${last.ndvi-q.ndvi>=0?'var(--accent)':'var(--warn)'}">${(last.ndvi-q.ndvi>=0?'+':'')+(last.ndvi-q.ndvi).toFixed(2)}</td>`:'<td class="num">—</td>'; }
     return `<tr><td><i style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${s.color};margin-right:6px"></i><span style="color:${s.color};font-weight:700">${selLabel(s.pid)}</span></td><td class="num">${last?last.ndvi.toFixed(2):'—'}</td><td>${last?fmtD(last.date):''}</td><td class="num">${mx?mx.ndvi.toFixed(2):'—'}</td><td>${mx?fmtD(mx.date):''}</td>${nbd}</tr>`; }).join('');
 }
+
+// ---------- Excel に保存（選んだ田の一覧・番号つきの地図・NDVI の推移） ----------
+// 地図: 航空写真（地理院タイル）の上に、いまの色分けと田の形を描き、選んだ田に ①② … の番号をつけた画像。表は同じ番号で並べる
+// ExcelJS は押したときだけ読み込む（cdn.jsdelivr.net）
+const CIRC='①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳';
+let excelJs=null;
+function loadExcelJs(){ return excelJs||(excelJs=new Promise((ok,ng)=>{ const sc=document.createElement('script'); sc.src='https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js';
+  sc.onload=()=>ok(window.ExcelJS); sc.onerror=()=>{ excelJs=null; ng(new Error('ExcelJS を読み込めませんでした')); }; document.head.appendChild(sc); })); }
+function numOf(pid){ const s=selected.find(x=>x.pid===pid); const k=s?PALETTE.indexOf(s.color):-1; return CIRC[k]||String(k+1); }
+function labelPt(g){   // 番号を置く点: いちばん大きい部分の重心（田の外に出るときは、中にある点のうち重心に近いもの）
+  const polys=g.type==='Polygon'?[g.coordinates]:g.coordinates, ar=r=>{ let a=0; for(let i=0,j=r.length-1;i<r.length;j=i++) a+=r[j][0]*r[i][1]-r[i][0]*r[j][1]; return a/2; };
+  const poly=polys.reduce((a,b)=>Math.abs(ar(b[0]))>Math.abs(ar(a[0]))?b:a), ring=poly[0], A=ar(ring); let cx=0,cy=0;
+  for(let i=0,j=ring.length-1;i<ring.length;j=i++){ const f=ring[j][0]*ring[i][1]-ring[i][0]*ring[j][1]; cx+=(ring[j][0]+ring[i][0])*f; cy+=(ring[j][1]+ring[i][1])*f; }
+  cx/=6*A; cy/=6*A; const ins=(x,y)=>inRing(ring,x,y)&&!poly.slice(1).some(h=>inRing(h,x,y)); if(ins(cx,cy)) return [cx,cy];
+  const xs=ring.map(p=>p[0]), ys=ring.map(p=>p[1]), x0=Math.min(...xs), x1=Math.max(...xs), y0=Math.min(...ys), y1=Math.max(...ys); let best=null, bd=1e18;
+  for(let i=1;i<30;i++) for(let j=1;j<30;j++){ const x=x0+(x1-x0)*i/30, y=y0+(y1-y0)*j/30; if(!ins(x,y)) continue; const d=(x-cx)**2+(y-cy)**2; if(d<bd){ bd=d; best=[x,y]; } }
+  return best||[cx,cy]; }
+async function exportMap(){   // 選んだ田を囲む範囲の地図（PNG の dataURL と幅・高さ）
+  const P=selected.map(s=>parcels[s.pid]).filter(Boolean); if(!P.length) return null;
+  let b=P[0].layer.getBounds(); for(const x of P) b=b.extend(x.layer.getBounds());
+  const pr=ll=>L.CRS.EPSG3857.project(ll), a=pr(b.getSouthWest()), c=pr(b.getNorthEast());
+  let x0=a.x, x1=c.x, y0=c.y, y1=a.y; const pad=Math.max(60,0.15*Math.max(x1-x0,y0-y1)); x0-=pad; x1+=pad; y0+=pad; y1-=pad;
+  const W0=x1-x0, H0=y0-y1, MAXPX=1100; let z=18; const res=z=>2*Math.PI*6378137/(256*2**z);
+  while(z>12&&Math.max(W0,H0)/res(z)>MAXPX) z--;
+  const r=res(z), W=Math.round(W0/r), H=Math.round(H0/r), O=Math.PI*6378137;
+  const cv=document.createElement('canvas'); cv.width=W; cv.height=H; const x=cv.getContext('2d'); x.fillStyle='#dfe4dc'; x.fillRect(0,0,W,H);
+  const px=(X,Y)=>[(X-x0)/r,(y0-Y)/r], img=src=>new Promise(ok=>{ const im=new Image(); im.crossOrigin='anonymous'; im.onload=()=>ok(im); im.onerror=()=>ok(null); im.src=src; });
+  const tx0=Math.floor((x0+O)/(256*r)), tx1=Math.floor((x1+O)/(256*r)), ty0=Math.floor((O-y0)/(256*r)), ty1=Math.floor((O-y1)/(256*r)), jobs=[];
+  for(let ty=ty0;ty<=ty1;ty++) for(let tx=tx0;tx<=tx1;tx++) jobs.push(img(`${gsi}seamlessphoto/${z}/${tx}/${ty}.jpg`).then(im=>{ if(im) x.drawImage(im,tx*256-(x0+O)/r,ty*256-(O-y0)/r,256,256); }));
+  await Promise.all(jobs);
+  try{ x.getImageData(0,0,1,1); }catch(e){ x.fillStyle='#dfe4dc'; x.fillRect(0,0,W,H); }   // 写真が使えない（ブラウザの制限）ときは写真なし
+  // いまの色分け（田の中の10m画素・生育傾向）
+  const ovs=[]; pxLayer.eachLayer(l=>{ if(l._url&&l.getBounds) ovs.push(l); });
+  for(const l of ovs){ const im=await img(l._url); if(!im) continue; const bb=l.getBounds(), p1=pr(bb.getNorthWest()), p2=pr(bb.getSouthEast()), [u1,v1]=px(p1.x,p1.y), [u2,v2]=px(p2.x,p2.y); x.drawImage(im,u1,v1,u2-u1,v2-v1); }
+  const path=(pid)=>{ const g=parcels[pid].feature.geometry; x.beginPath();
+    for(const poly of g.type==='Polygon'?[g.coordinates]:g.coordinates) for(const ring of poly) ring.forEach(([lon,lat],i)=>{ const q=pr(L.latLng(lat,lon)), [u,v]=px(q.x,q.y); x[i?'lineTo':'moveTo'](u,v); }); };
+  const bbx=L.latLngBounds(L.CRS.EPSG3857.unproject(L.point(x0,y1)),L.CRS.EPSG3857.unproject(L.point(x1,y0)));
+  x.strokeStyle='rgba(255,255,255,.75)'; x.lineWidth=1;
+  for(const q in parcels){ if(selected.some(s=>s.pid===q)) continue; const lb=parcels[q].layer.getBounds&&parcels[q].layer.getBounds(); if(lb&&bbx.intersects(lb)){ path(q); x.stroke(); } }
+  for(const s of selected){ if(!parcels[s.pid]) continue; path(s.pid); x.lineWidth=4; x.strokeStyle='#fff'; x.stroke(); x.lineWidth=2.5; x.strokeStyle=s.color; x.stroke(); }
+  const fs=Math.max(16,Math.min(26,Math.round(W/40)));
+  for(const s of selected){ const P_=parcels[s.pid]; if(!P_) continue; const cc=labelPt(P_.feature.geometry), q=pr(L.latLng(cc[1],cc[0])), [u,v]=px(q.x,q.y);
+    x.beginPath(); x.arc(u,v,fs*0.72,0,2*Math.PI); x.fillStyle='#fff'; x.fill(); x.lineWidth=2.5; x.strokeStyle=s.color; x.stroke();
+    x.fillStyle=s.color; x.font=`700 ${fs}px sans-serif`; x.textAlign='center'; x.textBaseline='middle'; x.fillText(String(PALETTE.indexOf(s.color)+1),u,v+1); }
+  // 縮尺と方位
+  const m=r/Math.cos(bbx.getCenter().lat*Math.PI/180), nice=[20,50,100,200,500,1000,2000].find(v=>v/m>=W*0.12)||2000, sw=nice/m;
+  x.fillStyle='rgba(255,255,255,.85)'; x.fillRect(8,H-34,sw+70,26); x.fillStyle='#222'; x.fillRect(16,H-18,sw,4); x.font='12px sans-serif'; x.textAlign='left'; x.textBaseline='alphabetic';
+  x.fillText(nice>=1000?`${nice/1000}km`:`${nice}m`,20+sw,H-14); x.font='700 14px sans-serif'; x.fillText('↑北',W-40,22);
+  x.font='11px sans-serif'; x.fillStyle='rgba(255,255,255,.85)'; const at='地理院タイル（航空写真）・筆ポリゴン（農林水産省）'; const tw=x.measureText(at).width; x.fillRect(W-tw-12,H-20,tw+8,16); x.fillStyle='#333'; x.fillText(at,W-tw-8,H-8);
+  return {url:cv.toDataURL('image/png'),W,H};
+}
+async function exportRows(){   // 田ごとの行（点数は生育傾向マップと同じ計算。データがない田は空欄）
+  const CN={'稲':'稲','麦':'麦','休':'休耕か草','他':'その他','':''}, y=allDates.length?allDates[allDates.length-1].slice(0,4):'', out=[], years=new Set();
+  for(const s of selected){ const P=parcels[s.pid]; if(!P) continue; const o={pid:s.pid,color:s.color,no:numOf(s.pid),label:selLabel(s.pid)};
+    o.area=polyArea(P.feature.geometry)/100; const c=P.layer.getBounds().getCenter(); o.lat=c.lat; o.lon=c.lng;
+    const ser=seriesOf(s.pid).filter(q=>!q.rad), last=ser[ser.length-1], yr=ser.filter(q=>q.date.startsWith(y)), mx=yr.length?yr.reduce((a,b)=>b.ndvi>a.ndvi?b:a):null;
+    o.last=last; o.max=mx;
+    if(P.cell){ const [r,sh,wz,wl]=await Promise.all([trLoad(P.cell),shapeLoad(P.cell),wetLoad(P.cell),wildLoad(P.cell)]);
+      if(r){ const cr=cropsOf(s.pid,r); o.crops={}; for(const k in cr){ o.crops[k]=CN[cr[k]]??cr[k]; years.add(k); }
+        const t=drawTrend(s.pid,r,true);
+        if(t.span&&SHOW_RANK){ const p=rankParts(s.pid,r,t,sh&&sh.p&&sh.p[s.pid],hamaOf(s.pid,t.deep,wz,wl&&wl.p&&wl.p[s.pid])), mt=await wildRisk(s.pid);
+          const sc=Math.round(p.base-(mt&&mt.pen||0)); o.rank={sc,rk:RANK_CUT.find(q=>sc>=q[0])[1],p,mt,text:rankText(p,mt).join(' ')}; } } }
+    out.push(o); }
+  return {rows:out,years:[...years].sort()};
+}
+document.getElementById('btnXlsx').onclick=async()=>{
+  if(!selected.length){ setStatus('田んぼを選んでから押してください。'); return; }
+  const btn=document.getElementById('btnXlsx'); btn.disabled=true; setStatus('Excel を作っています…');
+  try{
+    const [EJ,map_,data]=await Promise.all([loadExcelJs(),exportMap(),exportRows()]);
+    const wb=new EJ.Workbook(), ws=wb.addWorksheet('一覧'), today=new Date(), ds=`${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+    ws.getCell('A1').value=`田んぼNDVIマップ　選んだ田んぼの一覧（${ds}）`; ws.getCell('A1').font={bold:true,size:14};
+    ws.getCell('A2').value='地図の番号と、下の表の「番号」が同じ田です。'; ws.getCell('A2').font={color:{argb:'FF555555'}};
+    let row=4;
+    if(map_){ const w=Math.min(760,map_.W), h=Math.round(map_.H*w/map_.W), id=wb.addImage({base64:map_.url,extension:'png'});
+      ws.addImage(id,{tl:{col:0,row:3},ext:{width:w,height:h}}); row=4+Math.ceil(h/20)+1; }
+    const R=data.rows.some(o=>o.rank), cols=[['番号',6],['田んぼ',15],['面積(a)',9],
+      ...(R?[['ランク',7],['点数',7],['広さ/30',8],['生育のそろい/15',10],['形と大きさ/15',10],['深いところの少なさ/10',12],['例年の旺盛さ/20',10],['年ごとの安定/10',10],['獣害(減点)/20',10],['説明',60]]:[]),
+      ['直近のNDVI',10],['直近の日付',11],['今年の最大NDVI',11],['最大の日付',11],...data.years.map(yy=>[`${yy}年の作物`,10]),['緯度',11],['経度',11],['地図で開く',12],['区画ID',38]];
+    ws.getRow(row).values=cols.map(c=>c[0]); ws.getRow(row).font={bold:true}; ws.getRow(row).alignment={wrapText:true,vertical:'middle'};
+    ws.getRow(row).eachCell(c=>{ c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFE8EFE6'}}; c.border={bottom:{style:'thin'}}; });
+    cols.forEach((c,i)=>{ ws.getColumn(i+1).width=c[1]; });
+    const base=location.href.split('#')[0].split('?')[0], r1=v=>v==null?null:Math.round(v*10)/10;
+    for(const o of data.rows){ row++; const k=o.rank, P=k&&k.p.pts;
+      const v=[o.no,o.label,Math.round(o.area*10)/10,
+        ...(R?(k?[k.rk,k.sc,r1(P.area),r1(P.unif),r1(P.shape),r1(P.hama??P.deep),r1(P.vig),r1(P.stab),k.mt&&k.mt.ok?-k.mt.pen:null,k.text]:['','','','','','','','','','稲の年が足りない・データ準備中のため評価なし']):[]),
+        o.last?Math.round(o.last.ndvi*100)/100:null,o.last?o.last.date:'',o.max?Math.round(o.max.ndvi*100)/100:null,o.max?o.max.date:'',
+        ...data.years.map(yy=>o.crops&&o.crops[yy]||''),Math.round(o.lat*1e6)/1e6,Math.round(o.lon*1e6)/1e6,
+        {text:'地図',hyperlink:`${base}#c=${o.lat.toFixed(6)},${o.lon.toFixed(6)}&z=18`},o.pid];
+      ws.getRow(row).values=v; ws.getRow(row).alignment={vertical:'top',wrapText:true};
+      const c1=ws.getRow(row).getCell(1); c1.font={bold:true,size:14,color:{argb:'FF'+o.color.slice(1).toUpperCase()}}; c1.alignment={horizontal:'center',vertical:'top'};
+      ws.getRow(row).getCell(2).font={bold:true,color:{argb:'FF'+o.color.slice(1).toUpperCase()}};
+      const lk=ws.getRow(row).getCell(cols.findIndex(c=>c[0]==='地図で開く')+1); lk.font={color:{argb:'FF1A73E8'},underline:true}; }
+    // NDVI の推移（日付 × 田）
+    const ws2=wb.addWorksheet('NDVIの推移'), S=selected.filter(s=>parcels[s.pid]).map(s=>({s,m:new Map(seriesOf(s.pid).filter(q=>!q.rad).map(q=>[q.date,q]))})), dd=[...new Set(S.flatMap(x=>[...x.m.keys()]))].sort();
+    ws2.getRow(1).values=['日付',...S.map(x=>selLabel(x.s.pid)),'備考']; ws2.getRow(1).font={bold:true}; ws2.getColumn(1).width=12;
+    S.forEach((x,i)=>{ ws2.getColumn(i+2).width=13; ws2.getRow(1).getCell(i+2).font={bold:true,color:{argb:'FF'+x.s.color.slice(1).toUpperCase()}}; });
+    dd.forEach((d,i)=>{ const q=S.map(x=>x.m.get(d)), ls=q.some(z=>z&&z.ls); ws2.getRow(i+2).values=[d,...q.map(z=>z?Math.round(z.ndvi*1000)/1000:null),(ls?'Landsat（30m）':'')+(excluded.has(d)?' 雲・かすみの疑い':'')]; });
+    ws2.getRow(dd.length+3).values=['NDVI は区画の平均（Sentinel-2 10m・Landsat 30m）。雲やかすみで低く出る日があります。'];
+    const buf=await wb.xlsx.writeBuffer(), a=document.createElement('a');
+    a.href=URL.createObjectURL(new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'})); a.download=`tanbo_${ds}.xlsx`; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(a.href),10000); setStatus('');
+  }catch(e){ setStatus('Excel を作れませんでした: '+e.message); }
+  finally{ btn.disabled=false; }
+};
 
 // ---------- exclusions ----------
 function buildExcl(){
