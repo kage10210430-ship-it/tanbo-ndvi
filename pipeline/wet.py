@@ -22,7 +22,7 @@ cells/<id>/wet.json:
                                                      田の中の凹凸cm, 山際%, TWI×10, 元(0=5aレーザー,1=5b/5c,2=10m,3=GEE 30m)]} | null},
    "wet":{"src","seasons":[済んだ時期], "fail":{時期: [失敗回数, 最後に失敗した日]}, "p":{pid:[wi中央値×100, wi上位1割×100, wi>1 の割合%, 乾いた日の SWIR の差×1000|null,
                                                                   レーダーの差 dB×10|null, 水が見えた割合%|null, 使った観測の数]}}}
-cells/<id>/wet_sum.npz: 乾きの時期ごとの合計を足したもの（int32, 田の外は0。キー s2_A, s1_N … と seasons）。
+<wet_state_dir>/<id>.npz（公開しない。Actions では wet-state ブランチ）: 乾きの時期ごとの合計を足したもの（int32, 田の外は0。キー s2_A, s1_N … と seasons）。
   新しい時期が終わったら、その時期だけ GEE で取って足す（古い時期は取り直さない。wet_seasons は最初に取る時期の数）
   土・地形は1回だけ（取れなかったら RETRY_DAYS 日あとにもう一度）。乾きで2回続けて失敗した時期も RETRY_DAYS 日あとにもう一度。
   trend.py からは2回に分けて呼ぶ: 先に全セルの土・地形（タイルだけで軽い）、残りの時間で乾き（GEE で重い）。
@@ -257,7 +257,7 @@ def soil_table():
 def soil_decode(rgba):
     """RGBA → 表の添字（−1 = 透明・データなし, −2 = 表にない色）。戻り値 (添字, 色が一致した画素, 近い色で決めた画素)
     表の色は記号を表す番号のようなもの（となりの記号と 1〜2 しか違わない）なので、近い色で決めるのは次のときだけ:
-      不透明（alpha 255）・黒（境界線や文字 (0,0,0)）でも白に近い色（R+G+B ≥ 760）でもない・L1 距離 3 以内の候補がどれも
+      不透明（alpha 255）・黒に近い色（境界線や文字。R+G+B ≤ 12、泥炭土の色のそば）でも白に近い色（R+G+B ≥ 760）でもない・L1 距離 3 以内の候補がどれも
       同じくらいの軟らかさ（差 0.1 以内。一番近いものを使う）。残った表にない色（線・文字）は、3×3 のまわりで一番多い記号で埋める"""
     import numpy as np
     T = soil_table(); a = rgba.reshape(-1, 4).astype(np.int64)
@@ -266,7 +266,7 @@ def soil_decode(rgba):
     hit = T["keys"][pos] == key
     out = np.where(hit, T["idx"][pos], -2)
     rgbsum = a[:, :3].sum(1)
-    miss = ~hit & (a[:, 3] == 255) & (key != 0) & (rgbsum < 760)
+    miss = ~hit & (a[:, 3] == 255) & (rgbsum > 12) & (rgbsum < 760)
     if miss.any():
         u, inv = np.unique(key[miss], return_inverse=True)
         uc = np.stack([u >> 16, (u >> 8) & 255, u & 255], 1)
@@ -887,7 +887,10 @@ def update_cell(src, cfg, data_dir, index, cell, today, ready, log, deadline=Non
     if not parcels or not parcels.get("features"):
         return 0
     g = grid_for(cell["bbox"])
-    meta_p, png_p, sum_p = os.path.join(cdir, "wet.json"), os.path.join(cdir, "wet.png"), os.path.join(cdir, "wet_sum.npz")
+    sdir = cfg.get("wet_state_dir") or cdir      # 乾きの合計は公開しない（Pages の容量のため）。Actions では wet-state ブランチに置く
+    os.makedirs(sdir, exist_ok=True)
+    meta_p, png_p = os.path.join(cdir, "wet.json"), os.path.join(cdir, "wet.png")
+    sum_p = os.path.join(sdir, f"{cell['id']}.npz") if cfg.get("wet_state_dir") else os.path.join(cdir, "wet_sum.npz")
     m = read_json(meta_p) or {}
     if m.get("v") != VERSION or any(m.get(k) != g[k] for k in g):
         m = {}
@@ -927,7 +930,7 @@ def update_cell(src, cfg, data_dir, index, cell, today, ready, log, deadline=Non
         try:
             w, wi, fail = wet_part(src.sat, parcels, cell, g, ready, prev, log, today, sum_p, deadline)
         except WetFail as e:
-            m.setdefault("wet", {"seasons": [], "p": None})["fail"] = e.fail; save()
+            m["wet"] = {**(m.get("wet") or {"seasons": [], "p": None}), "fail": e.fail}; save()
             raise
         if w is not None:
             m["wet"] = w
@@ -937,8 +940,8 @@ def update_cell(src, cfg, data_dir, index, cell, today, ready, log, deadline=Non
                 layers.pop("wi", None)
             made += 1
         elif fail != (prev or {}).get("fail"):
-            m.setdefault("wet", {"seasons": [], "p": None})["fail"] = fail; made += 1
-        if not os.path.exists(sum_p) and m.get("wet", {}).get("seasons"):
+            m["wet"] = {**(m.get("wet") or {"seasons": [], "p": None}), "fail": fail}; made += 1
+        if not os.path.exists(sum_p) and (m.get("wet") or {}).get("seasons"):
             m["wet"]["seasons"] = []                     # 合計がなければ、時期はまだ済んでいない
         save()
     s, t, w = m.get("soil") or {}, m.get("terr") or {}, m.get("wet") or {}
