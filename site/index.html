@@ -728,7 +728,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
                    radial-gradient(circle at 50% 12%,#ffd6f5 0 .5px,transparent 1.3px),linear-gradient(160deg,#2c0656,#0b0020 55%,#3d0b40)}
   .rk-SSS small,.rk-SSS span,.rk-SSS i{position:relative;z-index:2}
   .rk-SSS small{color:#ffe27a;text-shadow:0 0 4px rgba(255,215,0,.9)}
-  .rk-SSS span{font-size:1.2em;letter-spacing:-.04em;background:linear-gradient(90deg,#fff7b0,#ffd700,#ff8ad8,#9be7ff,#b7ffb0,#fff7b0);background-size:250% auto;
+  .rankbox .rk-SSS span{font-size:1.25em;letter-spacing:-.03em;background:linear-gradient(90deg,#fff7b0,#ffd700,#ff8ad8,#9be7ff,#b7ffb0,#fff7b0);background-size:250% auto;
         -webkit-background-clip:text;background-clip:text;color:transparent;animation:urText 2.2s linear infinite;filter:drop-shadow(0 0 3px rgba(255,215,0,.95)) drop-shadow(0 0 7px rgba(255,80,200,.6))}
   .rk-SSS i{position:absolute;font-style:normal;color:#fff;font-size:.55em;text-shadow:0 0 4px #fff,0 0 8px #ffd700;animation:rkTwinkle 1.3s ease-in-out infinite}
   .rk-SSS i:nth-of-type(1){top:.18em;left:.3em} .rk-SSS i:nth-of-type(2){top:.35em;right:.25em;animation-delay:.45s;font-size:.45em} .rk-SSS i:nth-of-type(3){bottom:.22em;right:.45em;animation-delay:.9s}
@@ -780,7 +780,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
     <div class="maphint" id="maphint">地図を拡大すると区画が表示されます</div>
     <div class="mapbar">
       <div class="ctl" style="margin:0"><span id="dateCtl" style="display:inline-flex;gap:6px;align-items:center"><span>色の日付</span><select id="colorDate"></select></span><label><input type="checkbox" id="colorOn" checked>区画を色分け</label></div>
-      <div class="ctl" style="margin:4px 0 0"><span>塗り方</span><select id="fillMode"><option value="abs" selected>絶対表示</option><option value="rel">相対表示</option><option value="trend">生育傾向マップ</option></select><span class="pxnote" id="pxNote"></span></div>
+      <div class="ctl" style="margin:4px 0 0"><span>塗り方</span><select id="fillMode"><option value="abs" selected>絶対表示</option><option value="rel">相対表示</option><option value="trend">生育傾向マップ</option></select><label title="色を段階に分け、境目に線を引いて、ゾーンで見やすくする（外すと10m画素のまま）"><input type="checkbox" id="bandOn" checked>ゾーン表示</label><span class="pxnote" id="pxNote"></span></div>
       <div class="bar" id="lgBar"></div><div class="lbl" id="lgLbl"><span>低い 0.2</span><span>NDVI</span><span>0.9 高い</span></div>
     </div>
   </div>
@@ -1012,20 +1012,47 @@ function pxRegion(pid,m){   // 区画の形を格子の座標（列, 行）に�
   const inside=(x,y)=>rings.some(poly=>inRing(poly[0],x,y)&&!poly.slice(1).some(h=>inRing(h,x,y)));
   return {rings,c0,c1,r0,r1,cw,ch,inside};
 }
-function pxOverlay(R,m,val,color,fill){   // val（NaN=なし）を色にして、区画の形に切り抜いて地図に重ねる
+// ゾーン表示: 10m画素の値を画素の中心どうしでなめらかにつなぎ（双一次補間）、段階（BANDS）に分けて塗り、段階の境目に線を引く（等高線のように）
+//   絶対表示: NDVI 0.1 ごと 7段階（0.3 未満〜0.8 以上）。相対表示・生育傾向: 目盛り（±span）を 7段階（中央 ±15%・±45%・±75%）
+const BANDS={abs:{edges:[0.3,0.4,0.5,0.6,0.7,0.8],mid:[0.25,0.35,0.45,0.55,0.65,0.75,0.85]},rel:{edges:[-0.75,-0.45,-0.15,0.15,0.45,0.75],mid:[-0.9,-0.6,-0.3,0,0.3,0.6,0.9]}};
+function bandOn(){ return document.getElementById('bandOn').checked; }
+try{ if(localStorage.getItem('bandOn')==='0') document.getElementById('bandOn').checked=false; }catch(e){}
+function bandCols(kind){ return BANDS[kind].mid.map(v=>kind==='abs'?rgbOf(ndviColor(v)):relColor(v)); }
+function bandBar(kind){   // 凡例の段階の帯（絶対表示は 0.2〜0.9 の目盛りに合わせる）
+  const cols=bandCols(kind).map(c=>`rgb(${c.join(',')})`), E=BANDS[kind].edges, pos=kind==='abs'?E.map(e=>(e-0.2)/0.7*100):E.map(e=>(e+1)/2*100), st=[0,...pos,100];
+  return `linear-gradient(90deg,${cols.map((c,i)=>`${c} ${st[i].toFixed(1)}% ${st[i+1].toFixed(1)}%`).join(',')})`; }
+function pxOverlay(R,m,val,color,fill,band){   // val（NaN=なし）を色にして、区画の形に切り抜いて地図に重ねる。band={kind, t: 値→段階の軸}（ゾーン表示）
   const {rings,c0,c1,r0,r1,cw,ch}=R;
   for(let pass=0;pass<2;pass++){ const nv=val.slice();       // 雲・区画の外は周りの値でうめる（ぼかしで縁が薄くならないように）
     for(let y=0;y<ch;y++) for(let x=0;x<cw;x++){ if(!isNaN(val[y*cw+x])) continue; let s=0,n=0;
       for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++){ const yy=y+dy,xx=x+dx; if(yy<0||xx<0||yy>=ch||xx>=cw) continue; const w=val[yy*cw+xx]; if(!isNaN(w)){s+=w;n++;} }
       if(n) nv[y*cw+x]=s/n; }
     val.set(nv); }
+  const ll=(c,rr)=>L.CRS.EPSG3857.unproject(L.point(m.x0+c*m.px,m.y1-rr*m.px));
+  const clip=(bx,S)=>{ bx.beginPath(); for(const poly of rings) for(const ring of poly) ring.forEach(([x,y],i)=>bx[i?'lineTo':'moveTo']((x-c0)*S,(y-r0)*S)); bx.clip('evenodd'); };
+  if(band){
+    const S=Math.max(8,Math.min(24,Math.round(640/Math.max(cw,ch)))), FW=cw*S, FH=ch*S, E=BANDS[band.kind].edges, cols=bandCols(band.kind);
+    const T=new Float32Array(cw*ch); for(let i=0;i<cw*ch;i++) T[i]=band.t(isNaN(val[i])?fill:val[i]);
+    { const T0=T.slice();   // 1画素だけの点（ノイズ）で小さな島ができないよう、となりと軽くならす（半分だけ）
+      for(let y=0;y<ch;y++) for(let x=0;x<cw;x++){ let s=0,n=0; for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++){ const yy=y+dy,xx=x+dx; if(yy<0||xx<0||yy>=ch||xx>=cw) continue; const w=(dx?1:2)*(dy?1:2); s+=w*T0[yy*cw+xx]; n+=w; }
+        T[y*cw+x]=0.5*T0[y*cw+x]+0.5*s/n; } }
+    const cls=new Uint8Array(FW*FH);
+    for(let fy=0;fy<FH;fy++){ const gy=Math.max(0,Math.min(ch-1,(fy+.5)/S-.5)), y0=Math.min(ch-2,Math.floor(gy)), v=ch>1?gy-y0:0, ya=Math.max(0,y0), yb=Math.min(ch-1,y0+1);
+      for(let fx=0;fx<FW;fx++){ const gx=Math.max(0,Math.min(cw-1,(fx+.5)/S-.5)), x0=Math.min(cw-2,Math.floor(gx)), u=cw>1?gx-x0:0, xa=Math.max(0,x0), xb=Math.min(cw-1,x0+1);
+        const t=(T[ya*cw+xa]*(1-u)+T[ya*cw+xb]*u)*(1-v)+(T[yb*cw+xa]*(1-u)+T[yb*cw+xb]*u)*v;
+        let k=0; while(k<E.length&&t>=E[k]) k++; cls[fy*FW+fx]=k; } }
+    const B=document.createElement('canvas'); B.width=FW; B.height=FH; const bx=B.getContext('2d'), id=bx.createImageData(FW,FH), lw=Math.max(1,Math.round(S/10));
+    for(let fy=0;fy<FH;fy++) for(let fx=0;fx<FW;fx++){ const i=fy*FW+fx, k=cls[i]; let edge=false;
+      for(let d=1;d<=lw&&!edge;d++) edge=(fx+d<FW&&cls[i+d]!==k)||(fy+d<FH&&cls[i+d*FW]!==k);
+      const c=cols[k]; id.data.set(edge?[c[0]*.55,c[1]*.55,c[2]*.55,255]:[c[0],c[1],c[2],255],i*4); }
+    const A=document.createElement('canvas'); A.width=FW; A.height=FH; A.getContext('2d').putImageData(id,0,0);
+    clip(bx,S); bx.drawImage(A,0,0);
+    L.imageOverlay(B.toDataURL(),L.latLngBounds(ll(c0,r1),ll(c1,r0)),{pane:'pxPane',interactive:false}).addTo(pxLayer); return; }
   const A=document.createElement('canvas'); A.width=cw; A.height=ch; const ax=A.getContext('2d'), id=ax.createImageData(cw,ch);
   for(let i=0;i<cw*ch;i++){ const v=isNaN(val[i])?fill:val[i]; id.data.set([...color(v),255],i*4); }
   ax.putImageData(id,0,0);
   const S=Math.max(4,Math.min(12,Math.round(400/Math.max(cw,ch)))), B=document.createElement('canvas'); B.width=cw*S; B.height=ch*S;
-  const bx=B.getContext('2d'); bx.beginPath(); for(const poly of rings) for(const ring of poly) ring.forEach(([x,y],i)=>bx[i?'lineTo':'moveTo']((x-c0)*S,(y-r0)*S));
-  bx.clip('evenodd'); bx.imageSmoothingEnabled=true; bx.imageSmoothingQuality='high'; bx.drawImage(A,0,0,cw*S,ch*S);
-  const ll=(c,rr)=>L.CRS.EPSG3857.unproject(L.point(m.x0+c*m.px,m.y1-rr*m.px));
+  const bx=B.getContext('2d'); clip(bx,S); bx.imageSmoothingEnabled=true; bx.imageSmoothingQuality='high'; bx.drawImage(A,0,0,cw*S,ch*S);
   L.imageOverlay(B.toDataURL(),L.latLngBounds(ll(c0,r1),ll(c1,r0)),{pane:'pxPane',interactive:false}).addTo(pxLayer);
 }
 function drawPx(pid,r,k,mode){
@@ -1036,7 +1063,8 @@ function drawPx(pid,r,k,mode){
   const mean=sum/nok, base=Math.max(0.05,mean);
   // 相対表示の目盛り: その田の中の差の大きさ（外れた5%を除く）に合わせる。最低 ±REL_MIN
   const devs=oks.map(x=>Math.abs(x-mean)/base).sort((a,b)=>a-b), span=Math.max(REL_MIN,devs[Math.floor(0.95*(devs.length-1))]||0);
-  pxOverlay(R,m,val,v=>mode==='rel'?relColor((v-mean)/base/span):rgbOf(ndviColor(v)),mean);
+  pxOverlay(R,m,val,v=>mode==='rel'?relColor((v-mean)/base/span):rgbOf(ndviColor(v)),mean,
+    bandOn()?(mode==='rel'?{kind:'rel',t:v=>(v-mean)/base/span}:{kind:'abs',t:v=>v}):null);
   return mode==='rel'?span:1;
 }
 
@@ -1113,7 +1141,7 @@ function drawTrend(pid,r){   // 戻り値 {years: 重ねた稲の年, rice: 稲�
   if(!nin||oks.length<Math.max(3,nin*0.1)) return out;       // 縁（約8m）は計算に使っていないので、内側に少しでもあれば描く（縁は内側の値でうめる）
   const mean=oks.reduce((a,b)=>a+b,0)/oks.length, devs=oks.map(x=>Math.abs(x-mean)).sort((a,b)=>a-b);
   out.span=Math.max(TREND_MIN_SPAN,devs[Math.floor(0.95*(devs.length-1))]||0);
-  pxOverlay(R,m,val,v=>relColor((v-mean)/out.span),mean);
+  pxOverlay(R,m,val,v=>relColor((v-mean)/out.span),mean,bandOn()?{kind:'rel',t:v=>(v-mean)/out.span}:null);
   const sd=oks.map(x=>x-mean).sort((a,b)=>a-b); out.spread=sd[Math.floor(0.9*(sd.length-1))]-sd[Math.floor(0.1*(sd.length-1))];   // 田の中のばらつき（上下1割を除いた幅）
   if(EL.length>=3){ const mE=EL.reduce((a,p)=>a+p[0],0)/EL.length, mL=EL.reduce((a,p)=>a+p[1],0)/EL.length;
     out.deep=EL.filter(([e,l])=>e-mE<=-0.03&&(l-mL)-(e-mE)>=0.04).length/EL.length; } else out.deep=0;   // 前半に出遅れて後半に大きく追いつく所
@@ -1290,6 +1318,7 @@ async function renderPx(){
   const gen=++pxGen, mode=fillMode(), on=document.getElementById('colorOn').checked, note=document.getElementById('pxNote');
   const bar=document.getElementById('lgBar'), lbl=document.getElementById('lgLbl');
   bar.classList.toggle('rel',mode==='rel'||isTrend(mode));
+  bar.style.background=bandOn()&&selected.length&&document.getElementById('colorOn').checked?bandBar(mode==='abs'?'abs':'rel'):'';
   lbl.innerHTML=mode==='rel'?'<span>その田の平均より低い</span><span>田の中の差</span><span>高い</span>':isTrend(mode)?'<span>生育弱傾向</span><span>稲の年の傾向</span><span>生育良傾向</span>':'<span>低い 0.2</span><span>NDVI</span><span>0.9 高い</span>';
   pxLayer.clearLayers(); if(!isTrend(mode)||!selected.length||!on){ const b=document.getElementById('rankBox'); b.style.display='none'; b.innerHTML=''; }
   if(!on){ note.textContent=''; return; }
@@ -1316,6 +1345,7 @@ async function buildPxDates(){   // 圃場内モードでは、選んだ田ん�
   sel.value=list.includes(keep)?keep:list[0]; paintMap();
 }
 document.getElementById('fillMode').onchange=()=>{ buildPxDates(); drawChart(); };
+document.getElementById('bandOn').onchange=e=>{ try{ localStorage.setItem('bandOn',e.target.checked?'1':'0'); }catch(err){} paintMap(); };
 
 // ---------- chips ----------
 function renderChips(){
