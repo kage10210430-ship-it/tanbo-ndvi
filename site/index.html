@@ -1213,6 +1213,13 @@ function shapeLoad(cell){ if(!(cell in shapeCache)) shapeCache[cell]=fetch(`${DA
 const cl01=x=>Math.max(0,Math.min(1,x)), SETUP_PCT=8;   // 20a の田で機械の出し入れが作業時間に占める割合（%）
 function polyArea(geom){ const ring=c=>{ const k=Math.cos(c[0][1]*Math.PI/180); let s=0; for(let i=0;i<c.length;i++){ const [x1,y1]=c[i],[x2,y2]=c[(i+1)%c.length]; s+=x1*y2-x2*y1; } return Math.abs(s)/2*111320*k*110540; };
   return (geom.type==='Polygon'?[geom.coordinates]:geom.coordinates).reduce((a,p)=>a+ring(p[0])-p.slice(1).reduce((b,h)=>b+ring(h),0),0); }
+function mbrOf(geom,area){   // いちばん小さい外接長方形: {fill: 面積÷外接長方形の面積（1に近いほど長方形）, ar: 長辺÷短辺}
+  const ring=geom.type==='Polygon'?geom.coordinates[0]:geom.coordinates.reduce((a,p)=>a.concat(p[0]),[]), k=Math.cos(ring[0][1]*Math.PI/180);
+  const P=ring.map(([x,y])=>[x*111320*k,y*110540]); let best=null;
+  for(let d=0;d<90;d+=0.5){ const c=Math.cos(d*Math.PI/180), s=Math.sin(d*Math.PI/180); let x0=1e18,x1=-1e18,y0=1e18,y1=-1e18;
+    for(const [x,y] of P){ const u=x*c+y*s, v=-x*s+y*c; if(u<x0)x0=u; if(u>x1)x1=u; if(v<y0)y0=v; if(v>y1)y1=v; }
+    const w=x1-x0, h=y1-y0; if(!best||w*h<best.a) best={a:w*h,ar:Math.max(w,h)/Math.max(1e-9,Math.min(w,h))}; }
+  return {fill:area/best.a,ar:best.ar}; }
 function rankParts(pid,r,t,sh){   // t = drawTrend の結果, sh = shape.json の行 [平均行程長, ロス%, 周長%, 鋭角の隅, 一番鋭い角, 向き]
   const rows=r.m.p[pid]||{}, cr=cropsOf(pid,r), rice=Object.keys(rows).filter(y=>cr[y]==='稲'), mls=rice.map(y=>rows[y][6]).filter(v=>v!=null).map(v=>v/1000);
   const vig=mls.length?mls.reduce((a,b)=>a+b,0)/mls.length:null;
@@ -1222,7 +1229,7 @@ function rankParts(pid,r,t,sh){   // t = drawTrend の結果, sh = shape.json �
   const pts={area:30*cl01(Math.log(Math.max(area,1)/500)/Math.log(20)), unif:15*cl01((0.15-t.spread)/0.13), deep:10*cl01(1-t.deep/0.4), vig:20*pct, stab:sd==null?5:10*cl01((0.08-sd)/0.06),
     shape:15*(1-cl01((sh?0.7*cl01(sh[1]/20)+0.3*cl01((sh[2]-100)/40):0.5)+SETUP_PCT*2000/Math.max(area,1)/20))};
   const sum=Object.values(pts).reduce((a,b)=>a+b,0);
-  return {area,spread:t.spread,deep:t.deep,pct,sd,sh,pts,sum,small:area<2000,base:sum};
+  return {area,spread:t.spread,deep:t.deep,pct,sd,sh,pts,sum,small:area<2000,base:sum,mbr:mbrOf(parcels[pid].feature.geometry,area)};
 }
 // 獣害の起きやすさ: cells/<id>/wild.json（ESA WorldCover の森と筆ポリゴンから）
 //   [f30, f100, f200, dirs, paddy] = 田の縁から 0〜30m・30〜100m・100〜200m の森の割合（%）, 200m以内に森がある方位（16方位のビット）, 周り300mの田の割合（%）
@@ -1254,9 +1261,10 @@ async function wildRisk(pid){
 function rankText(p,mt){
   const sh=p.sh, S=[];
   let form='圃場';
-  if(sh){ const [lb,loss,per,na]=sh, ar=lb*lb/Math.max(p.area,1);   // 長さ比 ≒ 行程長² ÷ 面積
-    form=loss<=5&&per<=115&&!na?(ar<1.4?'正方形の圃場':ar>=4?'細長い長方形の圃場':'長方形の圃場')
-      :loss<=12?'やや変形した圃場':`変形した圃場（同じ広さの長方形より機械作業が約${loss}%多い）`; }
+  // 形の言い方は、いちばん小さい外接長方形をどれだけ埋めているか（fill）で決める（機械作業のロスは、正方形や小さい田では形が整っていても大きくなるため使わない）
+  if(p.mbr){ const {fill,ar}=p.mbr, rect=ar<1.3?'正方形':ar>=4?'細長い長方形':'長方形', loss=sh?sh[1]:0;
+    form=fill>=0.93?`${rect}の圃場`:fill>=0.85?`ほぼ${rect}の圃場`:fill>=0.72?'やや変形した圃場'
+      :`変形した圃場${loss>=10?`（同じ広さの長方形より機械作業が約${loss}%多い）`:''}`; }
   S.push(`約${Math.round(p.area/100)}aの${form}。`);
   if(p.small) S.push(p.area<=1000?'機械の出し入れの手間のわりにとても狭い。':'機械の出し入れの手間のわりに狭い。');
   const v=p.pct>=0.8?['旺盛',1]:p.pct>=0.6?['やや旺盛',1]:p.pct>0.4?['平均的',0]:p.pct>0.2?['やや控えめ',-1]:['控えめ',-1];
