@@ -665,6 +665,8 @@ svg.leaflet-image-layer.leaflet-interactive path {
 		print-color-adjust: exact;
 		}
 	}
+.modedesc{font-size:11.5px;color:var(--ink2);margin:3px 0 0;line-height:1.4}
+.modedesc:empty{display:none}
 </style>
 <style>
   :root{--ink:#1e3a2f;--ink2:#4c5a52;--line:#cfd6cc;--panel:#f3f6f1;--accent:#2f7d4f;--warn:#b8442c;--grid:#e6eae3;
@@ -781,6 +783,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
     <div class="mapbar">
       <div class="ctl" style="margin:0"><span id="dateCtl" style="display:inline-flex;gap:6px;align-items:center"><span>色の日付</span><select id="colorDate"></select></span><input type="checkbox" id="colorOn" checked hidden></div>
       <div class="ctl" style="margin:4px 0 0"><span>塗り方</span><select id="fillMode"><option value="abs" selected>絶対表示</option><option value="rel">相対表示</option><option value="trend">生育傾向マップ</option></select><input type="checkbox" id="bandOn" checked hidden><span class="pxnote" id="pxNote"></span></div>
+      <div class="modedesc" id="modeDesc"></div>
       <div class="bar" id="lgBar"></div><div class="lbl" id="lgLbl"><span>低い 0.2</span><span>NDVI</span><span>0.9 高い</span></div>
     </div>
   </div>
@@ -1412,15 +1415,20 @@ async function renderTrend(gen,mode,note,lbl){
   if(wait) msg.push(`まだ準備中 ${wait}枚（順に作っています）`);
   note.textContent=msg.join(' / ');
 }
+const MODE_DESC={   // 塗り方ごとのひとこと説明
+  abs:'生育の量（NDVI）をそのまま色にします。ほかの田との比較に。',
+  rel:'田の中の差を7段階に強調します。田の中のムラを見るときに。',
+  trend:'例年（稲の年）の生育の強い所・弱い所。黄色が地区の平均で、ほかの田とも比べられます。'};
 async function renderPx(){
   const gen=++pxGen, mode=fillMode(), on=document.getElementById('colorOn').checked, note=document.getElementById('pxNote');
   const bar=document.getElementById('lgBar'), lbl=document.getElementById('lgLbl');
+  document.getElementById('modeDesc').textContent=MODE_DESC[mode]||'';
   bar.classList.toggle('rel',mode==='rel'||mode==='trend');
   bar.style.background=bandOn()&&selected.length&&document.getElementById('colorOn').checked?bandBar(mode==='abs'?'abs':'rel'):'';
   lbl.innerHTML=mode==='rel'?'<span>その田の平均より低い</span><span>田の中の差</span><span>高い</span>':isTrend(mode)?'<span>生育弱傾向</span><span>地区の平均（稲の年）</span><span>生育良傾向</span>':'<span>低い 0.2</span><span>NDVI</span><span>0.9 高い</span>';
   pxLayer.clearLayers(); if(!isTrend(mode)||!selected.length||!on){ const b=document.getElementById('rankBox'); b.style.display='none'; b.innerHTML=''; }
   if(!on){ note.textContent=''; return; }
-  if(!selected.length){ note.textContent=isTrend(mode)?'田んぼを選ぶと、その中の生育の傾向（稲の年だけを重ねたもの）を色分けします':'田んぼを選ぶと、その中を10m画素で色分けします'; return; }
+  if(!selected.length){ note.textContent='田んぼを選ぶと、その中を色分けします'; return; }
   if(isTrend(mode)) return renderTrend(gen,mode,note,lbl);
   const d=document.getElementById('colorDate').value; let ok=0,miss=0,cloud=0; const spans=[]; note.textContent='読み込み中…';
   for(const s of selected){ const P=parcels[s.pid]; if(!P||!P.cell){ miss++; continue; }
