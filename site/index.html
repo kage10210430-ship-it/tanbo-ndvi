@@ -779,8 +779,8 @@ svg.leaflet-image-layer.leaflet-interactive path {
     <div id="map"></div>
     <div class="maphint" id="maphint">地図を拡大すると区画が表示されます</div>
     <div class="mapbar">
-      <div class="ctl" style="margin:0"><span id="dateCtl" style="display:inline-flex;gap:6px;align-items:center"><span>色の日付</span><select id="colorDate"></select></span><label><input type="checkbox" id="colorOn" checked>区画を色分け</label></div>
-      <div class="ctl" style="margin:4px 0 0"><span>塗り方</span><select id="fillMode"><option value="abs" selected>絶対表示</option><option value="rel">相対表示</option><option value="trend">生育傾向マップ</option></select><label title="色を段階に分け、境目に線を引いて、ゾーンで見やすくする（外すと10m画素のまま）"><input type="checkbox" id="bandOn" checked>ゾーン表示</label><span class="pxnote" id="pxNote"></span></div>
+      <div class="ctl" style="margin:0"><span id="dateCtl" style="display:inline-flex;gap:6px;align-items:center"><span>色の日付</span><select id="colorDate"></select></span><input type="checkbox" id="colorOn" checked hidden></div>
+      <div class="ctl" style="margin:4px 0 0"><span>塗り方</span><select id="fillMode"><option value="abs" selected>絶対表示</option><option value="rel">相対表示</option><option value="trend">生育傾向マップ</option></select><input type="checkbox" id="bandOn" checked hidden><span class="pxnote" id="pxNote"></span></div>
       <div class="bar" id="lgBar"></div><div class="lbl" id="lgLbl"><span>低い 0.2</span><span>NDVI</span><span>0.9 高い</span></div>
     </div>
   </div>
@@ -798,9 +798,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
       <select id="mode">
         <option value="date">今年（5/10〜9/30）</option>
         <option value="doy">前年と重ねる（5/10〜9/30）</option>
-        <option value="dat">移植後日数</option>
       </select>
-      <label>移植日 <input type="date" id="tp"></label>
     </div>
     <div class="hint" id="trendHint" style="display:none">生育傾向マップのときは、グラフは稲の年（2022年から）の 5/10〜9/30 の平均を表示します</div>
     <div class="status" id="status"></div>
@@ -1016,7 +1014,6 @@ function pxRegion(pid,m){   // 区画の形を格子の座標（列, 行）に�
 //   絶対表示: NDVI 0.1 ごと 7段階（0.3 未満〜0.8 以上）。相対表示・生育傾向: 目盛り（±span）を 7段階（中央 ±15%・±45%・±75%）
 const BANDS={abs:{edges:[0.3,0.4,0.5,0.6,0.7,0.8],mid:[0.25,0.35,0.45,0.55,0.65,0.75,0.85]},rel:{edges:[-0.75,-0.45,-0.15,0.15,0.45,0.75],mid:[-0.9,-0.6,-0.3,0,0.3,0.6,0.9]}};
 function bandOn(){ return document.getElementById('bandOn').checked; }
-try{ if(localStorage.getItem('bandOn')==='0') document.getElementById('bandOn').checked=false; }catch(e){}
 function bandCols(kind){ return BANDS[kind].mid.map(v=>kind==='abs'?rgbOf(ndviColor(v)):relColor(v)); }
 function bandBar(kind){   // 凡例の段階の帯（絶対表示は 0.2〜0.9 の目盛りに合わせる）
   const cols=bandCols(kind).map(c=>`rgb(${c.join(',')})`), E=BANDS[kind].edges, pos=kind==='abs'?E.map(e=>(e-0.2)/0.7*100):E.map(e=>(e+1)/2*100), st=[0,...pos,100];
@@ -1447,7 +1444,6 @@ async function buildPxDates(){   // 圃場内モードでは、選んだ田ん�
   sel.value=list.includes(keep)?keep:list[0]; paintMap();
 }
 document.getElementById('fillMode').onchange=()=>{ buildPxDates(); drawChart(); };
-document.getElementById('bandOn').onchange=e=>{ try{ localStorage.setItem('bandOn',e.target.checked?'1':'0'); }catch(err){} paintMap(); };
 
 // ---------- chips ----------
 function renderChips(){
@@ -1464,8 +1460,7 @@ const fmtD=d=>`${+d.slice(5,7)}/${+d.slice(8,10)}`;
 function drawChart(){
   const svg=document.getElementById('chart'); const mode=document.getElementById('mode').value;
   const now=allDates.length?Date.parse(allDates[allDates.length-1]+'T00:00:00Z'):Date.now();
-  const tp=document.getElementById('tp').value; const tpT=tp?Date.parse(tp+'T00:00:00Z'):null;
-  if(mode==='dat'&&!tpT){ setStatus('移植日を入れると「移植後日数」で表示できます。'); } else if(!selected.length) setStatus('田んぼを選ぶとグラフが出ます。'); else setStatus('');
+  if(!selected.length) setStatus('田んぼを選ぶとグラフが出ます。'); else setStatus('');
   let xmin,xmax; const series=[]; const tmode=isTrend(fillMode());
   document.getElementById('modeCtl').style.display=tmode?'none':''; document.getElementById('trendHint').style.display=tmode?'':'none';
   if(tmode) setStatus(selected.length?'':'田んぼを選ぶとグラフが出ます。');
@@ -1484,13 +1479,10 @@ function drawChart(){
     for(const s of src) series.push({...s,pts:s.pts.filter(p=>p.t>=xmin&&p.t<=xmax).map(p=>({x:p.t,...p}))}); }
   else if(mode==='doy'){ xmin=0; xmax=(sEnd(y0)-sStart(y0))/864e5;
     for(const s of src) for(const [k,y] of [[0,y0],[1,y0-1]]){ const pts=s.pts.filter(p=>p.t>=sStart(y)&&p.t<=sEnd(y)).map(p=>({x:(p.t-sStart(y))/864e5,...p})); if(pts.length) series.push({...s,label:`${s.label} ${y}`,dash:k?(s.dash||'6 4'):s.dash,pts}); } }
-  else { if(!tpT){svg.innerHTML='';document.getElementById('legend')?.remove();return;} xmin=-20; xmax=160;
-    for(const s of src) series.push({...s,pts:s.pts.map(p=>({x:(p.t-tpT)/864e5,...p})).filter(p=>p.x>=xmin&&p.x<=xmax)}); }
   const X=v=>ML+(v-xmin)/(xmax-xmin)*(W-ML-MR), Y=v=>MT+(1-Math.max(-0.05,Math.min(1,v)))/1.05*(H-MT-MB);
   let g='';
   for(let v=0;v<=1.0001;v+=0.2) g+=`<line x1="${ML}" x2="${W-MR}" y1="${Y(v)}" y2="${Y(v)}" stroke="#e6eae3"/><text x="${ML-6}" y="${Y(v)+4}" text-anchor="end" font-size="12" fill="#4c5a52">${v.toFixed(1)}</text>`;
-  if(tmode||mode==='date'||mode==='doy'){ seasonTicks(mode==='date'&&!tmode?t=>t:t=>(t-sStart(y0))/864e5).forEach(([x,l],i,a)=>{ g+=`<line x1="${X(x)}" x2="${X(x)}" y1="${MT}" y2="${H-MB}" stroke="#eef1ec"/><text x="${X(x)}" y="${H-MB+15}" text-anchor="${i===0?'start':i===a.length-1?'end':'middle'}" font-size="12" fill="#4c5a52">${l}</text>`; }); }
-  else { for(let x=0;x<=160;x+=20) g+=`<line x1="${X(x)}" x2="${X(x)}" y1="${MT}" y2="${H-MB}" stroke="${x===0?'#b9c2b7':'#eef1ec'}"/><text x="${X(x)}" y="${H-MB+15}" text-anchor="middle" font-size="12" fill="#4c5a52">${x}日</text>`; g+=`<text x="${W-MR}" y="${H-6}" text-anchor="end" font-size="11" fill="#4c5a52">移植後日数</text>`; }
+  { seasonTicks(mode==='date'&&!tmode?t=>t:t=>(t-sStart(y0))/864e5).forEach(([x,l],i,a)=>{ g+=`<line x1="${X(x)}" x2="${X(x)}" y1="${MT}" y2="${H-MB}" stroke="#eef1ec"/><text x="${X(x)}" y="${H-MB+15}" text-anchor="${i===0?'start':i===a.length-1?'end':'middle'}" font-size="12" fill="#4c5a52">${l}</text>`; }); }
   g+=`<line x1="${ML}" x2="${W-MR}" y1="${Y(0)}" y2="${Y(0)}" stroke="#4c5a52"/>`;
   hoverPts=[];
   for(const s of series){ if(!s.pts.length) continue; g+=`<path d="${s.pts.map((p,i)=>`${i?'L':'M'}${X(p.x).toFixed(1)},${Y(p.ndvi).toFixed(1)}`).join('')}" fill="none" stroke="${s.color}" stroke-width="2" stroke-dasharray="${s.dash}" stroke-linejoin="round"/>`;
@@ -1513,7 +1505,7 @@ let lastPick=null;
     if(!best||best.d>25){lastPick=null;tip.style.display='none';svg.querySelector('#hl')?.setAttribute('visibility','hidden');return;}
     lastPick=best.h.p.date;
     const rows=hoverPts.filter(h=>Math.abs(h.x-best.h.x)<1e-6).sort((a,b)=>b.p.ndvi-a.p.ndvi); const mode=document.getElementById('mode').value;
-    tip.innerHTML=`<b>${mode==='dat'?'移植後'+Math.round(best.h.x)+'日（'+best.h.p.date+'）':best.h.p.date}</b>`+rows.map(h=>`<div class="r"><span><i style="background:${h.s.color}"></i>${h.s.label}${h.p.ls?'（Landsat）':h.p.rad?'（レーダー推定）':''}${h.p.haze?'（速報・もやの疑い）':h.p.prov?'（速報）':''}</span><span>${h.p.ndvi.toFixed(2)}</span></div>`).join('');
+    tip.innerHTML=`<b>${best.h.p.date}</b>`+rows.map(h=>`<div class="r"><span><i style="background:${h.s.color}"></i>${h.s.label}${h.p.ls?'（Landsat）':h.p.rad?'（レーダー推定）':''}${h.p.haze?'（速報・もやの疑い）':h.p.prov?'（速報）':''}</span><span>${h.p.ndvi.toFixed(2)}</span></div>`).join('');
     tip.style.display='block'; const hl=svg.querySelector('#hl'); hl.setAttribute('x1',best.h.px); hl.setAttribute('x2',best.h.px); hl.setAttribute('visibility','visible');
     const px=best.h.px*r.width/W; tip.style.left=(px+14+tip.offsetWidth>r.width?px-tip.offsetWidth-14:px+14)+'px'; tip.style.top=Math.max(0,(pt.clientY-r.top)-20)+'px'; };
   svg.addEventListener('mousemove',onMove); svg.addEventListener('touchstart',onMove,{passive:false}); svg.addEventListener('touchmove',onMove,{passive:false});
@@ -1649,7 +1641,7 @@ document.getElementById('btnAddExcl').onclick=()=>{const d=document.getElementBy
 document.getElementById('thr').onchange=()=>{detectOutliers(); refresh(); buildPxDates();};   // 圃場内モードでは画素がある日の一覧のまま
 document.getElementById('dipOn').onchange=refresh; document.getElementById('lsOn').onchange=refresh; document.getElementById('radarOn').onchange=refresh;
 document.getElementById('nbR').onchange=refresh; document.getElementById('nbOn').onchange=refresh;
-document.getElementById('mode').onchange=refresh; document.getElementById('tp').onchange=refresh;
+document.getElementById('mode').onchange=refresh;
 
 function refresh(){ syncClean(); renderChips(); paintMap(); drawChart(); renderSummary(); buildExcl(); if(index) writeHash(); }
 
