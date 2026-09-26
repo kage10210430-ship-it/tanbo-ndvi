@@ -1200,22 +1200,26 @@ async function wildRisk(pid){
   if(pad<40) t.push(`周り300mの田は${pad}%と少なく`);
   return {ok:true,pen,R,f30,f100,f200,ndir,pad,near,encl,iso,text:t.length?t.join('、')+'、獣害に注意です':''};
 }
+// 圃場の説明（1段落・である調）。例: 「約56aの長方形の圃場。例年の生育は旺盛かつ、圃場内の生育のバラつきは非常に少ない。作土の深い場所が一部あり。
+// 周囲が森に囲まれており、獣害のリスクが高い。」点数のわけはランクの札の説明に出す
 function rankText(p,mt){
-  const size=p.area>=10000?'大きい':p.area>=3000?'中くらいの':'小さめの';
-  const un=p.spread<=0.03?'よくそろっています':p.spread<=0.08?'おおむねそろっています':'ムラが大きめです';
-  const vg=p.pct>=0.7?`旺盛（地区の上位${Math.max(1,Math.round((1-p.pct)*10))}割）`:p.pct<=0.3?`控えめ（地区の下位${Math.max(1,Math.round(p.pct*10))}割）`:'地区の平均くらい';
-  const st=p.sd==null?'':p.sd<=0.025?'、年ごとの差は小さめ':p.sd<=0.05?'':'、年ごとの差は大きめ';
-  const sh=p.sh, hs=`${Math.round(p.area/100)}a`; let l1=`${hs}の${size}田です。`;
-  if(sh){ const [lb,loss,per,na,mn]=sh;
-    if(loss<=5&&per<=115&&!na) l1=`${hs}の${size}田で、形は整っています（1行程は平均約${lb}m）。`;
-    else if(loss<=12) l1=`${hs}の${size}田で、形はやや変形しています（同じ広さの長方形より機械作業が約${Math.max(1,loss)}%多い）。`;
-    else l1=`${hs}の${size}変形田で、同じ広さの長方形より機械作業が約${loss}%多くかかります`+(na?`（鋭角の隅${na}か所・一番鋭い所 ${mn}°）`:per>=115?`（畦畔が約${(per/100).toFixed(1)}倍）`:'')+'。'; }
-  if(p.small) l1+=`機械の出し入れの手間のわりに${p.area<=1000?'とても':''}狭い田です（−${p.small}点）。`;
-  const L=[l1,`田の中の生育は${un}。例年の生育は${vg}${st}です。`], ex=[];
-  if(p.deep>=0.15) ex.push([p.deep,`前半に出遅れて後半に追いつく所（田面が深いなど）が田の${Math.round(p.deep*100)}%あります。`]);
-  if(mt&&mt.ok&&mt.pen>=3&&mt.text) ex.push([mt.pen/20+0.5,`${mt.text}（−${mt.pen}点）。`]);
-  ex.sort((a,b)=>b[0]-a[0]); if(ex.length) L.push(ex[0][1]);
-  return L; }
+  const sh=p.sh, S=[];
+  let form='圃場';
+  if(sh){ const [lb,loss,per,na]=sh, ar=lb*lb/Math.max(p.area,1);   // 長さ比 ≒ 行程長² ÷ 面積
+    form=loss<=5&&per<=115&&!na?(ar<1.4?'正方形の圃場':ar>=4?'細長い長方形の圃場':'長方形の圃場')
+      :loss<=12?'やや変形した圃場':`変形した圃場（同じ広さの長方形より機械作業が約${loss}%多い）`; }
+  S.push(`約${Math.round(p.area/100)}aの${form}。`);
+  if(p.small) S.push(p.area<=1000?'機械の出し入れの手間のわりにとても狭い。':'機械の出し入れの手間のわりに狭い。');
+  const v=p.pct>=0.8?['旺盛',1]:p.pct>=0.6?['やや旺盛',1]:p.pct>0.4?['平均的',0]:p.pct>0.2?['やや控えめ',-1]:['控えめ',-1];
+  const u=p.spread<=0.03?['は非常に少ない',1]:p.spread<=0.06?['は少ない',1]:p.spread<=0.10?['がやや大きい',-1]:['が非常に大きい',-1];
+  const join=v[1]===0?'で、':v[1]===u[1]?(v[1]>0?'かつ、':'、かつ、'):'だが、';
+  S.push(`例年の生育は${v[0]}${join}圃場内の生育のバラつき${u[0]}。`);
+  if(p.sd!=null) S.push(p.sd<=0.025?'年による生育の差は小さい。':p.sd>0.05?'年による生育の差が大きい。':'');
+  if(p.deep>=0.15) S.push(p.deep>=0.35?'作土の深い場所が多い。':'作土の深い場所が一部あり。');
+  if(mt&&mt.ok&&mt.pen>=3){ const lv=mt.pen>=12?'が高い':mt.pen>=6?'がやや高い':'あり';
+    const why=mt.f30>=20&&mt.ndir>=10?'周囲が森に囲まれており':mt.f30>=20?'山際の圃場であり':mt.f100>=20||mt.f200>=20?'近くに森があり':mt.pad<40?'周りに田が少なく':'';
+    S.push(`${why?why+'、':''}獣害のリスク${lv}。`); }
+  return [S.join('')]; }
 let rkTipFor=null, rkPinned=false;
 function rankTip(b,x,pin){   // ランクの札の説明（点数の内わけと、それぞれの計算のしかた）。pin = 押して出した（ほかを押すまで出しておく）
   let el=document.getElementById('rkTip'); if(!el){ el=document.createElement('div'); el.id='rkTip'; el.className='rktip'; document.body.appendChild(el);
