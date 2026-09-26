@@ -2,6 +2,7 @@
 
 3つの部分を別々に作り、できた部分から保存する（時間切れ・取得の失敗があっても、次回に足りない部分だけ作り直す）:
   土   : 農研機構 日本土壌インベントリーの土壌図タイル（z15 の色 → 土壌の記号。色の表は soil_rgb.json）。
+         取れないときは国土交通省 土地分類基本調査（20万分の1）の土壌図（名前の言葉 → 軟らかさ。MLIT_SOIL_SCORE）。
          田の中の面積の割合で、土の軟らかさ・水はけの悪さ（0〜1）を平均する（泥炭土 1.0・グライ低地土 0.75・灰色低地土 0.35・褐色低地土 0.15 など）
   地形 : 国土地理院の標高タイル（dem5a → 5b → 5c → dem_png(10m) の順に埋める）。取れなければ GEE の Copernicus DEM（30m）。
          周りの田との高さの差・周りの中の低さの順位・山際（200m以内の高い所）・地形の湿りやすさ（TWI）・田の中の低い所（5m レーザーのときだけ）
@@ -331,6 +332,124 @@ def soil_part(tiles, parcels, cell, log):
         log(f"{cell['id']}: 土 泥炭土・黒泥土の画素 {npe}（うち近い色で決めた {round(100 * int((pe & near[inp][o]).sum()) / npe)}%）")
     return {"src": f"naro-soil-inventory z{z}", "names": names,
             "match": [round(100 * nhit / nin, 1), round(100 * nnear / nin, 1)], "p": p}
+
+
+# 土壌図の予備: 国土交通省 土地分類基本調査（20万分の1）の土壌図（都道府県ごとの ZIP、shapefile・cp932）。
+#   農研機構の土壌図タイルが取れないときに使う（粗いので、隣り合う田の違いまでは出ない）。属性1＝土壌群、属性2＝土壌統群の名前
+MLIT_SOIL_URL = "https://nlftp.mlit.go.jp/kokjo/tochimizu/F2/GIS/{pref:02d}.zip"
+MLIT_SOIL_SCORE = [   # 名前に含まれる言葉 → 軟らかさ（上から順に最初に当たったもの）。農研機構の表と同じ考え方
+    ("泥炭", 1.0), ("黒泥", 0.9), ("強グライ", 0.85), ("細粒グライ", 0.8), ("粗粒グライ", 0.65), ("グライ", 0.75),
+    ("多湿黒ボク", 0.55), ("細粒灰色低地", 0.45), ("粗粒灰色低地", 0.3), ("灰色低地", 0.35), ("灰色台地", 0.4),
+    ("細粒褐色低地", 0.2), ("粗粒褐色低地", 0.1), ("褐色低地", 0.15), ("黒ボク", 0.2), ("乾性褐色森林", 0.1), ("褐色森林", 0.15),
+    ("赤色", 0.2), ("黄色", 0.2), ("赤黄色", 0.2), ("ポドゾル", 0.15), ("岩屑", 0.05), ("未熟", 0.1), ("砂丘", 0.05), ("造成", 0.35)]
+_MLIT = {"lock": threading.Lock()}
+
+
+def mlit_score(name):
+    for k, v in MLIT_SOIL_SCORE:
+        if k in (name or ""):
+            return v
+    return None
+
+
+class MlitSoil:
+    """土地分類基本調査の土壌図（1回だけ取って、実行の中で使い回す）。layer() → (形の一覧, 名前の一覧, STRtree) | None"""
+    def __init__(self, pref, cache, log):
+        self.pref = pref; self.cache = cache; self.log = log
+
+    def _zip(self):
+        import requests
+        os.makedirs(self.cache, exist_ok=True); p = os.path.join(self.cache, f"mlit_soil_{self.pref:02d}.zip")
+        if not os.path.exists(p):
+            r = requests.get(MLIT_SOIL_URL.format(pref=self.pref), headers={"User-Agent": UA}, timeout=120); r.raise_for_status()
+            with open(p + ".part", "wb") as f:
+                f.write(r.content)
+            os.replace(p + ".part", p)
+        return p
+
+    def layer(self):
+        with _MLIT["lock"]:
+            if "layer" not in _MLIT:
+                try:
+                    _MLIT["layer"] = read_mlit_soil(self._zip())
+                    n = len(_MLIT["layer"][0]); self.log(f"土地分類基本調査の土壌図: {n}区画")
+                except Exception as e:
+                    self.log(f"土地分類基本調査の土壌図が使えません（{str(e)[:160]}）"); _MLIT["layer"] = None
+            return _MLIT["layer"]
+
+
+def read_mlit_soil(zpath):
+    """ZIP の中から土壌図の shapefile（属性1 に「グライ土」「褐色森林土」などが入っているもの）を探して読む"""
+    import zipfile, tempfile, shapefile
+    from shapely.geometry import shape
+    from shapely.strtree import STRtree
+    z = zipfile.ZipFile(zpath); names = z.namelist(); tmp = tempfile.mkdtemp()
+    for n in names:
+        if not n.lower().endswith(".shp"):
+            continue
+        base = n[:-4]; files = {}
+        for e in (".shp", ".dbf", ".shx"):
+            m = next((x for x in names if x.lower() == (base + e).lower()), None)
+            if m:
+                files[e] = z.read(m)
+        if len(files) < 3:
+            continue
+        r = shapefile.Reader(shp=io.BytesIO(files[".shp"]), dbf=io.BytesIO(files[".dbf"]), shx=io.BytesIO(files[".shx"]), encoding="cp932")
+        fields = [f[0] for f in r.fields[1:]]
+        if "属性1" not in fields or r.shapeType not in (5, 15, 25):
+            continue
+        recs = r.records(); i1 = fields.index("属性1"); i2 = fields.index("属性2") if "属性2" in fields else i1
+        vals = {str(x[i1]) for x in recs}
+        if not any(v.endswith("土") and ("グライ" in v or "褐色森林" in v or "低地土" in v) for v in vals):
+            continue
+        geoms, labels = [], []
+        for sh, rec in zip(r.shapes(), recs):
+            try:
+                gm = shape(sh.__geo_interface__)
+                if not gm.is_valid:
+                    gm = gm.buffer(0)
+            except Exception:
+                continue
+            nm = str(rec[i2]).strip() or str(rec[i1]).strip()
+            if gm.is_empty:
+                continue
+            geoms.append(gm); labels.append(nm)
+        return geoms, labels, STRtree(geoms)
+    raise ValueError("土壌図の shapefile が見つかりません")
+
+
+def mlit_soil_part(soil2, parcels, cell, log):
+    """土地分類基本調査の土壌図から、田ごとに [軟らかさ×100, 名前, 土壌図のない割合%, 主な名前の割合%]（soil_part と同じ形）"""
+    from shapely.geometry import shape
+    L = soil2.layer() if soil2 is not None else None
+    if not L:
+        return None
+    geoms, labels, tree = L; p = {}; names = {}
+    for f in parcels["features"]:
+        try:
+            g = shape(f["geometry"])
+            if not g.is_valid:
+                g = g.buffer(0)
+        except Exception:
+            continue
+        A = g.area
+        if A <= 0:
+            continue
+        acc = {}
+        for i in tree.query(g):
+            a = g.intersection(geoms[int(i)]).area
+            if a > 0:
+                acc[labels[int(i)]] = acc.get(labels[int(i)], 0) + a
+        cov = sum(acc.values()); nod = round(100 * max(0.0, 1 - cov / A))
+        if not acc:
+            p[f["properties"]["pid"]] = [None, None, 100, 0]; continue
+        dom = max(acc, key=acc.get); names[dom] = dom
+        sc = [(mlit_score(k), a) for k, a in acc.items() if mlit_score(k) is not None]
+        w = sum(a for _, a in sc)
+        p[f["properties"]["pid"]] = [round(100 * sum(v * a for v, a in sc) / w) if w else None, dom, nod, round(100 * acc[dom] / A)]
+    if not p:
+        return None
+    return {"src": "mlit-tochibunrui-200k", "names": names, "match": None, "p": p}
 
 
 # ---------------- 地形 ----------------
@@ -845,8 +964,8 @@ class FakeSat:
 
 
 class Sources:
-    def __init__(self, tiles, sat):
-        self.tiles = tiles; self.sat = sat
+    def __init__(self, tiles, sat, soil2=None):
+        self.tiles = tiles; self.sat = sat; self.soil2 = soil2
 
 
 def sources(cfg, backend, gee_backend=None, px=None, log=print):
@@ -854,15 +973,19 @@ def sources(cfg, backend, gee_backend=None, px=None, log=print):
         return Sources(FakeTiles(), FakeSat() if cfg.get("wet_sat", True) else None)
     cache = os.path.join(os.environ.get("RUNNER_TEMP") or ".cache", "tiles")
     sat = GEEWet(gee_backend, px) if gee_backend is not None and cfg.get("wet_sat", True) else None
-    return Sources(HttpTiles(cache, log), sat)
+    return Sources(HttpTiles(cache, log), sat, MlitSoil(int(cfg.get("soil_pref", 18)), cache, log))
 
 
 # ---------------- セルごと ----------------
-def _retry_due(part, today, days=RETRY_DAYS):
+def _retry_due(part, today, days=RETRY_DAYS, kind=""):
     if part is None:
         return True
-    if part.get("p") is not None and part.get("src") != "copernicus-glo30":   # GEE の 30m で代わりにした地形も、あとで標高タイルを試し直す
+    if part.get("p") is not None and part.get("src") not in ("copernicus-glo30", "mlit-tochibunrui-200k"):   # 予備（GEE の 30m・1/20万の土壌図）で代わりにしたものは、あとで本来のものを試し直す
         return False
+    if part.get("src") == "mlit-tochibunrui-200k":
+        days = max(days, 14)
+    if kind == "soil" and part.get("p") is None and not part.get("mlit"):
+        return True                                   # 予備の土壌図（土地分類基本調査）をまだ試していない
     try:
         return (today - dt.date.fromisoformat(part.get("tried", "2000-01-01"))).days >= days
     except ValueError:
@@ -874,7 +997,7 @@ def todo(m, today, ready, parts=("soil", "terr", "wet")):
     if m.get("v") != VERSION:
         out = ["soil", "terr", "wet"] if ready else ["soil", "terr"]
     else:
-        out = [k for k in ("soil", "terr") if _retry_due(m.get(k), today, SOIL_RETRY_DAYS if k == "soil" else RETRY_DAYS)]
+        out = [k for k in ("soil", "terr") if _retry_due(m.get(k), today, SOIL_RETRY_DAYS if k == "soil" else RETRY_DAYS, k)]
         w = m.get("wet") or {}; fail = w.get("fail", {})
         done = set(w.get("seasons", [])) | {k for k, v in fail.items() if fail_blocked(v, today)}
         if ready and not set(ready) <= done:
@@ -919,7 +1042,12 @@ def update_cell(src, cfg, data_dir, index, cell, today, ready, log, deadline=Non
             s = soil_part(src.tiles, parcels, cell, log)
         except Exception as e:
             log(f"{cell['id']}: 土 エラー {e}"); s = None
-        m["soil"] = {**(s or {"src": None, "p": None}), "tried": today.isoformat()}; made += 1; save()
+        if s is None and getattr(src, "soil2", None) is not None:   # 農研機構の土壌図が取れないときは、土地分類基本調査（1/20万）で
+            try:
+                s = mlit_soil_part(src.soil2, parcels, cell, log)
+            except Exception as e:
+                log(f"{cell['id']}: 土（土地分類基本調査） エラー {e}"); s = None
+        m["soil"] = {**(s or {"src": None, "p": None}), "tried": today.isoformat(), "mlit": getattr(src, "soil2", None) is not None}; made += 1; save()
     if "terr" in todo_ and not (deadline and time.time() > deadline):
         around = neighbor_parcels(data_dir, index, cell["id"])
         try:

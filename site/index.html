@@ -1256,7 +1256,7 @@ function wetLoad(cell){
 function hamaOf(pid,deep,wz,wd){   // wz = wetLoad の結果, wd = wild.json の行 [f30,f100,…]。この田の土・乾き・地形がどれもなければ null
   const m=wz&&wz.m; if(!m) return null;
   const s=m.soil&&m.soil.p&&m.soil.p[pid], t=m.terr&&m.terr.p&&m.terr.p[pid], w=m.wet&&m.wet.p&&m.wet.p[pid], C={}, X={};
-  if(s&&s[0]!=null){ C.s=s[0]/100; X.soil={code:s[1],name:(m.soil.names||{})[s[1]]||s[1],nod:s[2],share:s[3]}; }
+  if(s&&s[0]!=null){ C.s=s[0]/100; X.soil={code:s[1],name:(m.soil.names||{})[s[1]]||s[1],nod:s[2],share:s[3],mlit:/^mlit/.test(m.soil.src||'')}; }
   X.soilWait=!(m.soil&&m.soil.p);   // 土壌図が取れなかった（あとで取り直す）
   if(w){ X.wi=(w[0]+w[1])/200; C.w=cl01(0.35+0.25*X.wi); X.wet=w; }
   if(t){ const [,rel,pctl,low,ldir,rng,hill,twi,src]=t, sub=[], add=(k,v,wt)=>{ if(v!=null){ sub.push([v,wt]); X[k]=v; } };
@@ -1270,8 +1270,13 @@ function hamaOf(pid,deep,wz,wd){   // wz = wetLoad の結果, wd = wild.json の
   let W=0,S=0; for(const k in C){ W+=HAMA_W[k]; S+=HAMA_W[k]*C[k]; }
   const H=W>=0.5?S/W:(S+(0.5-W)*HAMA_MID)/0.5;
   return {H,C,W,X,src:{soil:m.soil&&m.soil.src,terr:m.terr&&m.terr.src,seasons:(m.wet&&m.wet.seasons)||[]}}; }
-function soilWhy(code,name){   // 土の説明（である調の文の頭）
+function soilWhy(code,name){   // 土の説明（である調の文の頭）。記号がない土壌図（土地分類基本調査）は名前の言葉で
   if(!code) return '';
+  if(!/^[A-Z]/.test(code)){ const n=name||code;
+    if(/黒泥/.test(n)) return '黒泥土で地盤が軟らかく、';
+    if(/泥炭/.test(n)) return '泥炭土で地盤が軟らかく、';
+    if(/グライ/.test(n)) return 'グライ土で水はけが悪く、';
+    return `${n.replace(/土壌$/,'土')}で水はけがやや悪く、`; }
   if(code.startsWith('B1e4')) return '黒泥土（腐朽質泥炭土）で地盤が軟らかく、';
   if(code[0]==='B') return '泥炭土で地盤が軟らかく、';
   if(code.startsWith('F2e6')) return '泥炭質のグライ土で地盤が軟らかく、';
@@ -1339,7 +1344,7 @@ function hamaWhy(p,pc){   // ランクの札の説明の「深いところの少
   const dp=`前半（6月ごろ）に出遅れて後半（8月ごろ）に大きく追いつく所（田面が深いなど）が田の ${pc(p.deep)}`;
   if(!p.hz) return `${dp}。土・乾き・地形のデータは準備中のため、深い所だけで 10 ×（1 − 割合÷40%）`;
   const {H,C,X,W}=p.hz, f2=v=>v.toFixed(2), L=[];
-  L.push(X.soil?`土 ${C.s!=null?f2(C.s):'—'}：${X.soil.name}（${X.soil.code}${X.soil.share<90?`・田の${X.soil.share}%`:''}${X.soil.nod>=30?`・${X.soil.nod}%は土壌図なし`:''}。土壌図 1/5万）`:X.soilWait?'土 —：土壌図は準備中':'土 —：この田は土壌図の範囲外');
+  L.push(X.soil?`土 ${C.s!=null?f2(C.s):'—'}：${X.soil.name}（${X.soil.mlit?'':X.soil.code}${X.soil.share<90?`・田の${X.soil.share}%`:''}${X.soil.nod>=30?`・${X.soil.nod}%は土壌図なし`:''}${X.soil.mlit?'':'。'}${X.soil.mlit?'土地分類基本調査の土壌図 1/20万。隣り合う圃場の違いまでは分からない':'土壌図 1/5万'}）`:X.soilWait?'土 —：土壌図は準備中':'土 —：この田は土壌図の範囲外');
   if(X.wet){ const w=X.wet; L.push(`乾きにくさ ${f2(C.w)}：稲刈り後・春先の、同じ日の周り（6km四方の耕地）と比べた湿りやすさ 中央 ${(w[0]/100).toFixed(1)}・上位1割 ${(w[1]/100).toFixed(1)}（周りのふつうを0とした目盛り）`
     +`${w[5]!=null?`、水が見えた観測 ${w[5]}%`:''}（${p.hz.src.seasons.length}時期・${w[6]}観測）。0.35 + 0.25 × 平均`); }
   else L.push('乾きにくさ —：衛星のデータは準備中');
@@ -1373,7 +1378,7 @@ function rankTip(b,x,pin){   // ランクの札の説明（点数の内わけと
   ${mt&&mt.ok?`<tr><td>獣害</td><td class="num"><b>−${pen}</b> / 20</td><td class="why">田の縁から 30m以内の森 ${mt.f30}%・30〜100m ${mt.f100}%、森がある方位 ${mt.ndir}/16、周り300mの田 ${mt.pad}%。
     近さ ${mt.near.toFixed(2)} =（0.6×30m以内 + 0.4×30〜100m）÷ 40%、囲まれ ${mt.encl.toFixed(2)} =（方位数 − 3）÷ 9、孤立 ${mt.iso.toFixed(2)} =（40% − 周りの田）÷ 35%（どれも 0〜1）。
     減点 = 20 ×（0.6×近さ + 0.25×囲まれ + 0.15×孤立）（森は ESA WorldCover 2021、10m）</td></tr>`:`<tr><td>獣害</td><td class="num">−0</td><td class="why">手がかりの準備中のため減点なし</td></tr>`}
-  </table><div class="why">ランクの区切り：${cut}（県全体の稲の田で ${share}）。NDVI は Sentinel-2 と Landsat、形は筆ポリゴン（農林水産省）から。${p.hz?'深いところの少なさの土は農研機構 日本土壌インベントリー（CC BY 4.0）、標高は国土地理院 標高タイル、乾きは Sentinel-1/2 と ERA5-Land から。':''}</div>`;
+  </table><div class="why">ランクの区切り：${cut}（県全体の稲の田で ${share}）。NDVI は Sentinel-2 と Landsat、形は筆ポリゴン（農林水産省）から。${p.hz?'深いところの少なさの土は農研機構 日本土壌インベントリー（CC BY 4.0）または国土交通省 土地分類基本調査、標高は国土地理院 標高タイル、乾きは Sentinel-1/2 と ERA5-Land から。':''}</div>`;
   el.style.fontSize=Math.max(12,0.85*parseFloat(getComputedStyle(b.closest('.rankbox')).fontSize))+'px';
   el.style.maxHeight=''; el.style.display='block'; const r=b.getBoundingClientRect(), w=el.offsetWidth; let h=el.offsetHeight, left, top;
   if(r.right+8+w<=innerWidth-8||r.left-8-w>=8){   // 横に置ける
