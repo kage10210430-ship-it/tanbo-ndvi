@@ -34,7 +34,8 @@ from pixels import grid_for, read_layers, write_png
 
 VERSION = 1
 PAD_DEG = (0.0056, 0.0045)        # セルの外に広げる幅（経度, 緯度）: 約500m（周りの田と比べるため）
-RETRY_DAYS = 28                   # 土・地形のタイルが取れなかったセルを、もう一度試すまでの日数
+RETRY_DAYS = 28                   # 地形のタイルが取れなかったセル・乾きで続けて失敗した時期を、もう一度試すまでの日数
+SOIL_RETRY_DAYS = 2               # 土壌図が取れなかったセル（農研機構のサーバーが止まっていることがある）は2日ごとに試す
 TILE = 256; RM = 6378137.0; ORIG = math.pi * RM
 UA = "tanbo-ndvi (+https://github.com/; paddy field NDVI map, Fukui)"
 URLS = {   # 上から順に試す（同じ場所の予備）
@@ -857,13 +858,13 @@ def sources(cfg, backend, gee_backend=None, px=None, log=print):
 
 
 # ---------------- セルごと ----------------
-def _retry_due(part, today):
+def _retry_due(part, today, days=RETRY_DAYS):
     if part is None:
         return True
     if part.get("p") is not None and part.get("src") != "copernicus-glo30":   # GEE の 30m で代わりにした地形も、あとで標高タイルを試し直す
         return False
     try:
-        return (today - dt.date.fromisoformat(part.get("tried", "2000-01-01"))).days >= RETRY_DAYS
+        return (today - dt.date.fromisoformat(part.get("tried", "2000-01-01"))).days >= days
     except ValueError:
         return True
 
@@ -873,7 +874,7 @@ def todo(m, today, ready, parts=("soil", "terr", "wet")):
     if m.get("v") != VERSION:
         out = ["soil", "terr", "wet"] if ready else ["soil", "terr"]
     else:
-        out = [k for k in ("soil", "terr") if _retry_due(m.get(k), today)]
+        out = [k for k in ("soil", "terr") if _retry_due(m.get(k), today, SOIL_RETRY_DAYS if k == "soil" else RETRY_DAYS)]
         w = m.get("wet") or {}; fail = w.get("fail", {})
         done = set(w.get("seasons", [])) | {k for k, v in fail.items() if fail_blocked(v, today)}
         if ready and not set(ready) <= done:
